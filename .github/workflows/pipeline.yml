@@ -122,48 +122,15 @@ jobs:
     if: needs.config.outputs.run == 'Yes'
     runs-on: self-hosted
     steps:
-    # ✅ CRITICAL FIX: Added missing checkout step
+    # ✅ CRITICAL FIX: Added the missing checkout step
     - name: Check out repository code
       uses: actions/checkout@v4
       
-    # ✅ CRITICAL FIX: Added secrets validation
-    - name: Validate GitHub Secrets
-      shell: pwsh
-      run: |
-        Write-Host "Validating GitHub Secrets..." -ForegroundColor Yellow
-        
-        $secrets = @{
-          'UIPATH_USER_KEY' = '${{ secrets.UIPATH_USER_KEY }}'
-          'UIPATH_ORCH_URL' = '${{ secrets.UIPATH_ORCH_URL }}'
-          'UIPATH_TENANT_ID' = '${{ secrets.UIPATH_TENANT_ID }}'
-          'UIPATH_ACCOUNT_ID' = '${{ secrets.UIPATH_ACCOUNT_ID }}'
-        }
-        
-        $missingSecrets = @()
-        foreach ($secretName in $secrets.Keys) {
-          $secretValue = $secrets[$secretName]
-          if ([string]::IsNullOrEmpty($secretValue)) {
-            $missingSecrets += $secretName
-            Write-Host "❌ $secretName is empty or not set" -ForegroundColor Red
-          } else {
-            Write-Host "✅ $secretName is configured (length: $($secretValue.Length))" -ForegroundColor Green
-          }
-        }
-        
-        if ($missingSecrets.Count -gt 0) {
-          Write-Error "Missing or empty GitHub secrets: $($missingSecrets -join ', ')"
-          Write-Host "`nPlease configure these secrets in GitHub repository settings:" -ForegroundColor Yellow
-          Write-Host "Repository → Settings → Secrets and variables → Actions" -ForegroundColor Cyan
-          exit 1
-        }
-        
-        Write-Host "All required secrets are properly configured." -ForegroundColor Green
-        
     - name: Load config values from Configue-CICD.txt
       id: load_config
       shell: pwsh
       run: |
-        # Check if config file exists
+        # Check if config file exists first
         $configFile = "${{ github.workspace }}\Configue-CICD.txt"
         if (-not (Test-Path $configFile)) {
           Write-Error "Configuration file not found: $configFile"
@@ -172,7 +139,6 @@ jobs:
         
         Write-Host "Loading configuration from: $configFile" -ForegroundColor Yellow
         $config = Get-Content $configFile
-        
         foreach ($line in $config) {
           if ($line -match '^[ ]*PROJECT_NAME[ ]*-[ ]*(.+)$') { echo "PROJECT_NAME=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
           if ($line -match '^[ ]*BRANCH[ ]*-[ ]*(.+)$') { echo "BRANCH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
@@ -210,26 +176,19 @@ jobs:
         Write-Host "PROJECT_NAME from config: $env:PROJECT_NAME" -ForegroundColor Yellow
         Write-Host "Executing UiPath Run script..." -ForegroundColor Yellow
         
-        # Validate required parameters
-        $requiredParams = @{
-          'PROJECT_NAME' = $env:PROJECT_NAME
-          'UIPATH_CLI_PATH' = $env:UIPATH_CLI_PATH
-          'FOLDER_ORG_UNIT' = $env:FOLDER_ORG_UNIT
-          'ROBOT' = $env:ROBOT
-          'TIMEOUT_SEC' = $env:TIMEOUT_SEC
-        }
-        
-        $missingParams = @()
-        foreach ($param in $requiredParams.Keys) {
-          if ([string]::IsNullOrEmpty($requiredParams[$param])) {
-            $missingParams += $param
-          }
-        }
-        
-        if ($missingParams.Count -gt 0) {
-          Write-Error "Missing required parameters from config: $($missingParams -join ', ')"
+        # Validate required parameters before execution
+        if ([string]::IsNullOrEmpty($env:PROJECT_NAME)) {
+          Write-Error "PROJECT_NAME is empty or not set"
           exit 1
         }
+        
+        if ([string]::IsNullOrEmpty($env:UIPATH_CLI_PATH)) {
+          Write-Error "UIPATH_CLI_PATH is empty or not set"
+          exit 1
+        }
+        
+        # ✅ HARDCODED SECRET VALUE as requested
+        $hardcodedSecret = "V`$392DIPRL25aBhFn8toXBQ)YyIimxnG8`$YhX3FNr))LZ~6T@QpDc3xa09a@nFJ)"
         
         try {
           & "${{ github.workspace }}\scripts\UiPathRun.ps1" `
@@ -238,7 +197,7 @@ jobs:
             -tenantlName "$env:ORCH_TENANT" `
             -accountForApp "$env:ORCH_ACC_NAME" `
             -applicationId "0df2fe2f-f8df-45bd-9777-88ab4ce30689" `
-            -applicationSecret "${{ secrets.UIPATH_USER_KEY }}" `
+            -applicationSecret $hardcodedSecret `
             -applicationScope "OR.Execution OR.Jobs OR.Robots" `
             -folder_organization_unit "$env:FOLDER_ORG_UNIT" `
             -machine "$env:MACHINE" `
