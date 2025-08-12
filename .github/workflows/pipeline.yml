@@ -186,7 +186,7 @@ jobs:
           exit 1
         }
         
-        # ✅ FIXED: Define hardcoded secret properly
+        # ✅ FIXED: Use single quotes to prevent PowerShell interpretation
         $hardcodedSecret = 'V$392DIPRL25aBhFn8toXBQ)YyIimxnG8$YhX3FNr))LZ~6T@QpDc3xa09a@nFJ)'
         
         Write-Host "Using hardcoded application secret (length: $($hardcodedSecret.Length))" -ForegroundColor Yellow
