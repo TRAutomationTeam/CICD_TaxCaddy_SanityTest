@@ -22,7 +22,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: echo-default-env-variables
-        shell: powershell
+        shell: pwsh
         run: |
           Write-Host "Home: $env:HOME"
           Write-Host "GITHUB_WORKFLOW: $env:GITHUB_WORKFLOW"
@@ -38,7 +38,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Runner workspace path
-        shell: powershell
+        shell: pwsh
         run: |
           echo "Cleaning up previous run"
           Remove-Item -Path "${{ github.workspace }}" -Recurse -Force -ErrorAction SilentlyContinue
@@ -54,24 +54,24 @@ jobs:
         uses: actions/checkout@v4
       - name: Get BUILD value from Configure-CICD.txt
         id: get_build
-        shell: powershell
+        shell: pwsh
         run: |
           $build = (Get-Content "${{ github.workspace }}/Configue-CICD.txt" | Where-Object { $_ -match '^BUILD[ ]*-[ ]*(.+)$' }) -replace '^BUILD[ ]*-[ ]*',''
           echo "build=$build" >> $env:GITHUB_OUTPUT
       - name: Get RUN value from Configure-CICD.txt
         id: get_run
-        shell: powershell
+        shell: pwsh
         run: |
           $run = (Get-Content "${{ github.workspace }}/Configue-CICD.txt" | Where-Object { $_ -match '^RUN[ ]*-[ ]*(.+)$' }) -replace '^RUN[ ]*-[ ]*',''
           echo "run=$run" >> $env:GITHUB_OUTPUT
       - name: Get DEPLOY value from Configure-CICD.txt
         id: get_deploy
-        shell: powershell
+        shell: pwsh
         run: |
           $deploy = (Get-Content "${{ github.workspace }}/Configue-CICD.txt" | Where-Object { $_ -match '^DEPLOY[ ]*-[ ]*(.+)$' }) -replace '^DEPLOY[ ]*-[ ]*',''
           echo "deploy=$deploy" >> $env:GITHUB_OUTPUT
       - name: Write ENVIRONMENT value to file
-        shell: powershell
+        shell: pwsh
         run: |
           $envValue = (Get-Content "${{ github.workspace }}/Configue-CICD.txt" | Where-Object { $_ -match '^[ ]*ENVIRONMENT[ ]*-[ ]*(.+)$' }) -replace '^[ ]*ENVIRONMENT[ ]*-[ ]*',''
           $outputPath = 'C:\Automation Team\CICD'
@@ -89,7 +89,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Load config values from Configue-CICD.txt
         id: load_config
-        shell: powershell
+        shell: pwsh
         run: |
           $config = Get-Content "${{ github.workspace }}\Configue-CICD.txt"
           foreach ($line in $config) {
@@ -103,7 +103,7 @@ jobs:
             if ($line -match '^[ ]*TIMEOUT_SEC[ ]*-[ ]*(.+)$') { echo "TIMEOUT_SEC=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
           }
       - name: Print loaded config values
-        shell: powershell
+        shell: pwsh
         run: |
           Get-ChildItem Env: | Where-Object { $_.Name -in @('PROJECT_NAME','BRANCH','UIPATH_CLI_PATH','FOLDER_ORG_UNIT','FOLDER_DEPLOY_UNIT','MACHINE','ROBOT','TIMEOUT_SEC') } | ForEach-Object { Write-Host "$($_.Name)=$($_.Value)" }
       - name: Build Nuget Package
@@ -127,7 +127,7 @@ jobs:
       
     - name: Load config values from Configue-CICD.txt
       id: load_config
-      shell: powershell
+      shell: pwsh
       run: |
         # Check if config file exists first
         $configFile = "${{ github.workspace }}\Configue-CICD.txt"
@@ -150,7 +150,7 @@ jobs:
         }
 
     - name: Print loaded config values
-      shell: powershell
+      shell: pwsh
       run: |
         Write-Host "Configuration values loaded:" -ForegroundColor Yellow
         Get-ChildItem Env: | Where-Object { $_.Name -in @(
@@ -160,7 +160,7 @@ jobs:
         ) } | ForEach-Object { Write-Host "  $($_.Name)=$($_.Value)" -ForegroundColor Cyan }
 
     - name: Debug UIPATH_CLI_PATH
-      shell: powershell
+      shell: pwsh
       run: |
         Write-Host "UIPATH_CLI_PATH: '$env:UIPATH_CLI_PATH'" -ForegroundColor Yellow
         if ($env:UIPATH_CLI_PATH) {
@@ -170,7 +170,7 @@ jobs:
         }
 
     - name: Run Package
-      shell: powershell
+      shell: pwsh
       run: |
         Write-Host "PROJECT_NAME from config: $env:PROJECT_NAME" -ForegroundColor Yellow
         Write-Host "Executing UiPath Run script..." -ForegroundColor Yellow
@@ -186,19 +186,15 @@ jobs:
           exit 1
         }
         
-        # ✅ FIXED: Use single quotes to prevent PowerShell interpretation
-        $hardcodedSecret = 'V$392DIPRL25aBhFn8toXBQ)YyIimxnG8$YhX3FNr))LZ~6T@QpDc3xa09a@nFJ)'
-        
-        Write-Host "Using hardcoded application secret (length: $($hardcodedSecret.Length))" -ForegroundColor Yellow
-        
         try {
+          # ✅ SIMPLIFIED: No need to pass applicationSecret since it's hardcoded in the script
           & "${{ github.workspace }}\scripts\UiPathRun.ps1" `
             -processName "$env:PROJECT_NAME" `
             -uriOrch "$env:ORCH_URL" `
             -tenantlName "$env:ORCH_TENANT" `
             -accountForApp "$env:ORCH_ACC_NAME" `
             -applicationId "0df2fe2f-f8df-45bd-9777-88ab4ce30689" `
-            -applicationSecret $hardcodedSecret `
+            -applicationSecret "" `
             -applicationScope "OR.Execution OR.Jobs OR.Robots" `
             -folder_organization_unit "$env:FOLDER_ORG_UNIT" `
             -machine "$env:MACHINE" `
@@ -225,7 +221,7 @@ jobs:
           
       - name: Load config values from Configue-CICD.txt
         id: load_config
-        shell: powershell
+        shell: pwsh
         run: |
           $config = Get-Content "${{ github.workspace }}\Configue-CICD.txt"
           foreach ($line in $config) {
