@@ -33,38 +33,81 @@ jobs:
           Write-Host "GITHUB_SHA: $env:GITHUB_SHA"
           Write-Host "GITHUB_REF: $env:GITHUB_REF"
 
+  # ✅ ENHANCED CLEANER - Force remove all files including hidden/system files
   cleaner:
     runs-on: self-hosted
     steps:
-      - name: Clean workspace completely
+      - name: Force clean workspace with enhanced permissions
         shell: pwsh
         run: |
-          Write-Host "=== CLEANING WORKSPACE ===" -ForegroundColor Yellow
-          Write-Host "Workspace path: ${{ github.workspace }}" -ForegroundColor Cyan
+          Write-Host "=== ENHANCED WORKSPACE CLEANING ===" -ForegroundColor Yellow
+          $workspace = "${{ github.workspace }}"
+          Write-Host "Target workspace: $workspace" -ForegroundColor Cyan
           
-          if (Test-Path "${{ github.workspace }}") {
-            Write-Host "Removing all contents..." -ForegroundColor Yellow
-            Get-ChildItem -Path "${{ github.workspace }}" -Force -Recurse -ErrorAction SilentlyContinue | 
-              Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-            Write-Host "Workspace cleaned successfully" -ForegroundColor Green
+          if (Test-Path $workspace) {
+            Write-Host "Workspace exists, performing deep clean..." -ForegroundColor Yellow
+            
+            # Method 1: Try PowerShell removal first
+            try {
+              Get-ChildItem -Path $workspace -Force -Recurse -ErrorAction SilentlyContinue | 
+                ForEach-Object { 
+                  try {
+                    $_.Delete()
+                  } catch {
+                    Write-Host "Could not delete: $($_.FullName)" -ForegroundColor Red
+                  }
+                }
+              
+              # Remove the directories
+              Get-ChildItem -Path $workspace -Directory -Force -ErrorAction SilentlyContinue | 
+                Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+                
+              # Remove remaining files
+              Get-ChildItem -Path $workspace -File -Force -ErrorAction SilentlyContinue | 
+                Remove-Item -Force -ErrorAction SilentlyContinue
+                
+            } catch {
+              Write-Host "PowerShell cleanup failed: $_" -ForegroundColor Red
+            }
+            
+            # Method 2: Use CMD for stubborn files (Windows)
+            if ($IsWindows -or $env:OS -eq "Windows_NT") {
+              Write-Host "Using CMD for Windows cleanup..." -ForegroundColor Yellow
+              try {
+                cmd /c "rmdir /s /q `"$workspace`" 2>nul"
+                cmd /c "del /f /s /q `"$workspace\*.*`" 2>nul"
+              } catch {
+                Write-Host "CMD cleanup had issues: $_" -ForegroundColor Red
+              }
+            }
+            
+            # Method 3: Create fresh directory
+            if (-not (Test-Path $workspace)) {
+              New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+              Write-Host "Created fresh workspace directory" -ForegroundColor Green
+            }
+            
           } else {
-            Write-Host "Workspace directory doesn't exist yet" -ForegroundColor Green
+            Write-Host "Workspace doesn't exist, creating..." -ForegroundColor Green
+            New-Item -ItemType Directory -Path $workspace -Force | Out-Null
           }
           
-      - name: Verify clean workspace
+      - name: Verify complete cleanup
         shell: pwsh
         run: |
-          Write-Host "=== VERIFYING CLEAN WORKSPACE ===" -ForegroundColor Yellow
-          if (Test-Path "${{ github.workspace }}") {
-            $items = Get-ChildItem -Path "${{ github.workspace }}" -Force -ErrorAction SilentlyContinue
-            if ($items) {
-              Write-Host "WARNING: Items still present:" -ForegroundColor Red
-              $items | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+          Write-Host "=== CLEANUP VERIFICATION ===" -ForegroundColor Yellow
+          $workspace = "${{ github.workspace }}"
+          
+          if (Test-Path $workspace) {
+            $items = @(Get-ChildItem -Path $workspace -Force -Recurse -ErrorAction SilentlyContinue)
+            if ($items.Count -eq 0) {
+              Write-Host "✅ Workspace is completely clean" -ForegroundColor Green
             } else {
-              Write-Host "✓ Workspace is clean" -ForegroundColor Green
+              Write-Host "⚠️ $($items.Count) items still present:" -ForegroundColor Yellow
+              $items | ForEach-Object { Write-Host "  $($_.FullName)" -ForegroundColor Red }
             }
           } else {
-            Write-Host "✓ Workspace directory clean" -ForegroundColor Green
+            Write-Host "✅ Workspace directory ready" -ForegroundColor Green
           }
 
   config:
@@ -75,35 +118,55 @@ jobs:
       run: ${{ steps.get_run.outputs.run }}
       deploy: ${{ steps.get_deploy.outputs.deploy }}
     steps:
-      - name: Check out repository code
+      # ✅ ENHANCED CHECKOUT - Force fresh checkout with all options
+      - name: Force fresh repository checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          clean: true
-          force: true
+          # Force a complete fresh checkout
+          fetch-depth: 0          # Fetch all history
+          clean: true             # Clean the repository  
+          force: true             # Force clean even if local changes
+          submodules: false       # Don't checkout submodules (can cause issues)
+          token: ${{ github.token }}
           
-      - name: Debug - Repository checkout verification
+      # ✅ ADDITIONAL CLEANUP AFTER CHECKOUT
+      - name: Post-checkout cleanup verification
         shell: pwsh
         run: |
-          Write-Host "=== REPOSITORY CHECKOUT VERIFICATION ===" -ForegroundColor Yellow
-          Write-Host "Workspace: ${{ github.workspace }}" -ForegroundColor Cyan
-          Write-Host "Repository contents:" -ForegroundColor Green
-          Get-ChildItem -Path "${{ github.workspace }}" -Force | ForEach-Object { 
-            Write-Host "  $($_.Name)" -ForegroundColor White
+          Write-Host "=== POST-CHECKOUT VERIFICATION ===" -ForegroundColor Yellow
+          $workspace = "${{ github.workspace }}"
+          
+          # Remove any potential Git locks or temp files
+          $gitLockFiles = @(
+            "$workspace\.git\index.lock",
+            "$workspace\.git\HEAD.lock",
+            "$workspace\.git\config.lock"
+          )
+          
+          foreach ($lockFile in $gitLockFiles) {
+            if (Test-Path $lockFile) {
+              Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+              Write-Host "Removed Git lock: $lockFile" -ForegroundColor Yellow
+            }
           }
           
-          # Check for config file specifically
-          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
-          if (Test-Path $configFile) {
-            Write-Host "✓ Config file found" -ForegroundColor Green
-            Write-Host "Config file contents:" -ForegroundColor Cyan
-            Get-Content $configFile | ForEach-Object { Write-Host "  $_" -ForegroundColor White }
-          } else {
-            Write-Host "✗ Config file NOT found at: $configFile" -ForegroundColor Red
-            Write-Host "Available files:" -ForegroundColor Yellow
-            Get-ChildItem -Path "${{ github.workspace }}" -Recurse -File | ForEach-Object { 
-              Write-Host "  $($_.FullName.Replace('${{ github.workspace }}', '.'))" -ForegroundColor White 
+          # Verify key files exist
+          $criticalFiles = @("Configue-CICD.txt", "project.json")
+          foreach ($file in $criticalFiles) {
+            $fullPath = Join-Path $workspace $file
+            if (Test-Path $fullPath) {
+              $lastWrite = (Get-Item $fullPath).LastWriteTime
+              Write-Host "✅ $file (Modified: $lastWrite)" -ForegroundColor Green
+            } else {
+              Write-Host "❌ Missing: $file" -ForegroundColor Red
             }
+          }
+          
+          # Show all repository contents with timestamps
+          Write-Host "`n📁 Repository Contents:" -ForegroundColor Cyan
+          Get-ChildItem -Path $workspace -Force | ForEach-Object {
+            $type = if ($_.PSIsContainer) { "📁" } else { "📄" }
+            Write-Host "  $type $($_.Name) (Modified: $($_.LastWriteTime))" -ForegroundColor White
           }
           
       - name: Get BUILD value from Configure-CICD.txt
@@ -112,111 +175,14 @@ jobs:
         run: |
           $configFile = "${{ github.workspace }}/Configue-CICD.txt"
           if (-not (Test-Path $configFile)) {
-            Write-Error "Configuration file not found: $configFile"
+            Write-Error "❌ Configuration file not found: $configFile"
+            Write-Host "Available files:" -ForegroundColor Yellow
+            Get-ChildItem "${{ github.workspace }}" | ForEach-Object { Write-Host "  $($_.Name)" }
             exit 1
           }
-          $build = (Get-Content $configFile | Where-Object { $_ -match '^BUILD[ ]*-[ ]*(.+)$' }) -replace '^BUILD[ ]*-[ ]*',''
-          Write-Host "BUILD value: $build" -ForegroundColor Green
-          echo "build=$build" >> $env:GITHUB_OUTPUT
           
-      - name: Get RUN value from Configure-CICD.txt
-        id: get_run
-        shell: pwsh
-        run: |
-          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
-          $run = (Get-Content $configFile | Where-Object { $_ -match '^RUN[ ]*-[ ]*(.+)$' }) -replace '^RUN[ ]*-[ ]*',''
-          Write-Host "RUN value: $run" -ForegroundColor Green
-          echo "run=$run" >> $env:GITHUB_OUTPUT
+          Write-Host "📖 Reading config from: $configFile" -ForegroundColor Cyan
+          $content = Get-Content $configFile -Raw
+          Write-Host "File content length: $($content.Length) characters" -ForegroundColor Yellow
           
-      - name: Get DEPLOY value from Configure-CICD.txt
-        id: get_deploy
-        shell: pwsh
-        run: |
-          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
-          $deploy = (Get-Content $configFile | Where-Object { $_ -match '^DEPLOY[ ]*-[ ]*(.+)$' }) -replace '^DEPLOY[ ]*-[ ]*',''
-          Write-Host "DEPLOY value: $deploy" -ForegroundColor Green
-          echo "deploy=$deploy" >> $env:GITHUB_OUTPUT
-          
-      - name: Write ENVIRONMENT value to file
-        shell: pwsh
-        run: |
-          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
-          $envValue = (Get-Content $configFile | Where-Object { $_ -match '^[ ]*ENVIRONMENT[ ]*-[ ]*(.+)$' }) -replace '^[ ]*ENVIRONMENT[ ]*-[ ]*',''
-          Write-Host "ENVIRONMENT value: $envValue" -ForegroundColor Green
-          
-          $outputPath = 'C:\Automation Team\CICD'
-          if (!(Test-Path $outputPath)) { New-Item -Path $outputPath -ItemType Directory -Force }
-          $envFile = Join-Path $outputPath 'environment.txt'
-          Remove-Item -Path $envFile -Force -ErrorAction SilentlyContinue
-          Set-Content -Path $envFile -Value $envValue
-          Write-Host "Environment file written to: $envFile" -ForegroundColor Green
-
-  build-uipath-nuget-package:
-    needs: [config]
-    if: needs.config.outputs.build == 'Yes'
-    runs-on: self-hosted
-    steps: 
-      - name: Check out repository code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          force: true
-          
-      # ... rest of build steps remain the same
-
-  run-uipath-nuget-package:
-    needs: [config]
-    if: needs.config.outputs.run == 'Yes'
-    runs-on: self-hosted
-    steps:
-      - name: Check out repository code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          force: true
-          
-      - name: Debug - Repository checkout verification
-        shell: pwsh
-        run: |
-          Write-Host "=== POST-CHECKOUT VERIFICATION ===" -ForegroundColor Yellow
-          Write-Host "Workspace: ${{ github.workspace }}" -ForegroundColor Cyan
-          Write-Host "Current directory: $(Get-Location)" -ForegroundColor Cyan
-          
-          Write-Host "Repository root contents:" -ForegroundColor Green
-          Get-ChildItem -Path "${{ github.workspace }}" -Force | ForEach-Object { 
-            $type = if ($_.PSIsContainer) { "DIR " } else { "FILE" }
-            Write-Host "  $type $($_.Name)" -ForegroundColor White
-          }
-          
-          # Check for critical files
-          $criticalFiles = @(
-            "Configue-CICD.txt",
-            "project.json", 
-            "scripts/UiPathRun.ps1",
-            "scripts/UiPathPack.ps1"
-          )
-          
-          Write-Host "`nCritical files check:" -ForegroundColor Green
-          foreach ($file in $criticalFiles) {
-            $fullPath = Join-Path "${{ github.workspace }}" $file
-            if (Test-Path $fullPath) {
-              Write-Host "  ✓ $file" -ForegroundColor Green
-            } else {
-              Write-Host "  ✗ $file (MISSING!)" -ForegroundColor Red
-            }
-          }
-          
-          # Check scripts directory specifically
-          $scriptsDir = Join-Path "${{ github.workspace }}" "scripts"
-          if (Test-Path $scriptsDir) {
-            Write-Host "`nScripts directory contents:" -ForegroundColor Green
-            Get-ChildItem -Path $scriptsDir -Force | ForEach-Object { 
-              Write-Host "  $($_.Name)" -ForegroundColor White
-            }
-          } else {
-            Write-Host "`n✗ Scripts directory not found!" -ForegroundColor Red
-          }
-          
-      # ... rest of your run steps
+          $build = (Get-Content $configFile | Where-Object { $_ -match '^BUILD[ ]*-[ ]*(.
