@@ -4,7 +4,7 @@ param (
     [Parameter(Mandatory=$true)][string]$tenantlName,
     [Parameter(Mandatory=$true)][string]$accountForApp,
     [Parameter(Mandatory=$true)][string]$applicationId,
-    [Parameter(Mandatory=$false)][string]$applicationSecret = "",  # Made optional
+    [Parameter(Mandatory=$false)][AllowEmptyString()][string]$applicationSecret = "",  # ✅ FIXED: Made optional and allow empty string
     [Parameter(Mandatory=$true)][string]$applicationScope,
     [Parameter(Mandatory=$true)][string]$folder_organization_unit,
     [Parameter(Mandatory=$true)][string]$machine,
@@ -17,13 +17,13 @@ try {
     Write-Host "Starting UiPath Job Execution..." -ForegroundColor Yellow
     Write-Host "PowerShell Version: $($PSVersionTable.PSVersion)" -ForegroundColor Cyan
     
-    # Use hardcoded secret if not provided or empty
+    # ✅ ADDED: Use hardcoded secret if not provided or empty
     if ([string]::IsNullOrWhiteSpace($applicationSecret)) {
         Write-Host "Using fallback hardcoded application secret..." -ForegroundColor Yellow
         $applicationSecret = 'V$392DIPRL25aBhFn8toXBQ)YyIimxnG8$YhX3FNr))LZ~6T@QpDc3xa09a@nFJ)'
     }
     
-    # Print parameter values for debugging
+    # ✅ ADDED: Print parameter values for debugging
     Write-Host "Script Parameters:" -ForegroundColor Cyan
     Write-Host "  processName: $processName" -ForegroundColor White
     Write-Host "  uriOrch: $uriOrch" -ForegroundColor White
