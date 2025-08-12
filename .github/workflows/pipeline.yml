@@ -116,54 +116,47 @@ jobs:
            scripts/*.ps1
                     
   run-uipath-nuget-package:
-  needs: [config]
-  if: needs.config.outputs.run == 'Yes'
-  runs-on: self-hosted
-
-  steps:
-    - name: Load config values from Configue-CICD.txt
-      id: load_config
-      shell: pwsh
-      run: |
-        $config = Get-Content "${{ github.workspace }}\Configue-CICD.txt"
-        foreach ($line in $config) {
-          if ($line -match '^[ ]*PROJECT_NAME[ ]*-[ ]*(.+)$') { echo "PROJECT_NAME=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-          if ($line -match '^[ ]*BRANCH[ ]*-[ ]*(.+)$') { echo "BRANCH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-          if ($line -match '^[ ]*UIPATH_CLI_PATH[ ]*-[ ]*(.+)$') { echo "UIPATH_CLI_PATH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-          if ($line -match '^[ ]*FOLDER_ORGANIZATION_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_ORG_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-          if ($line -match '^[ ]*FOLDER_DEPLOY_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_DEPLOY_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-          if ($line -match '^[ ]*MACHINE[ ]*-[ ]*(.+)$') { echo "MACHINE=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-          if ($line -match '^[ ]*ROBOT[ ]*-[ ]*(.+)$') { echo "ROBOT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-          if ($line -match '^[ ]*TIMEOUT_SEC[ ]*-[ ]*(.+)$') { echo "TIMEOUT_SEC=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-        }
-
-    - name: Print loaded config values
-      shell: pwsh
-      run: |
-        Get-ChildItem Env: | Where-Object { $_.Name -in @(
-          'PROJECT_NAME','BRANCH','UIPATH_CLI_PATH',
-          'FOLDER_ORG_UNIT','FOLDER_DEPLOY_UNIT',
-          'MACHINE','ROBOT','TIMEOUT_SEC'
-        ) } | ForEach-Object { Write-Host "$($_.Name)=$($_.Value)" }
-
-    - name: Run Package
-      shell: pwsh
-      run: |
-        echo "PROJECT_NAME from config: $env:PROJECT_NAME"
-        & "${{ github.workspace }}\scripts\UiPathRun.ps1" `
-          -processName "$env:PROJECT_NAME" `
-          -uriOrch "$env:ORCH_URL" `
-          -tenantlName "$env:ORCH_TENANT" `
-          -accountForApp "surepymsxjta" `
-          -applicationId "0df2fe2f-f8df-45bd-9777-88ab4ce30689" `
-          -applicationSecret "${{ secrets.ORCH_USER_KEY }}" `
-          -applicationScope "OR.Execution OR.Jobs OR.Robots" `
-          -folder_organization_unit "$env:FOLDER_ORG_UNIT" `
-          -machine "$env:MACHINE" `
-          -robots "$env:ROBOT" `
-          -uipathCliFilePath "$env:UIPATH_CLI_PATH" `
-          -timeout "$env:TIMEOUT_SEC"
-
+      needs: [config]
+      if: needs.config.outputs.run == 'Yes'
+      runs-on: self-hosted
+      steps:
+        - name: Load config values from Configue-CICD.txt
+          id: load_config
+          shell: pwsh
+          run: |
+            $config = Get-Content "${{ github.workspace }}\Configue-CICD.txt"
+            foreach ($line in $config) {
+              if ($line -match '^[ ]*PROJECT_NAME[ ]*-[ ]*(.+)$') { echo "PROJECT_NAME=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*BRANCH[ ]*-[ ]*(.+)$') { echo "BRANCH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*UIPATH_CLI_PATH[ ]*-[ ]*(.+)$') { echo "UIPATH_CLI_PATH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*FOLDER_ORGANIZATION_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_ORG_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*FOLDER_DEPLOY_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_DEPLOY_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*MACHINE[ ]*-[ ]*(.+)$') { echo "MACHINE=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*ROBOT[ ]*-[ ]*(.+)$') { echo "ROBOT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*TIMEOUT_SEC[ ]*-[ ]*(.+)$') { echo "TIMEOUT_SEC=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+            }
+        - name: Print loaded config values
+          shell: pwsh
+          run: |
+            Get-ChildItem Env: | Where-Object { $_.Name -in @('PROJECT_NAME','BRANCH','UIPATH_CLI_PATH','FOLDER_ORG_UNIT','FOLDER_DEPLOY_UNIT','MACHINE','ROBOT','TIMEOUT_SEC') } | ForEach-Object { Write-Host "$($_.Name)=$($_.Value)" }
+        - name: run Package
+          shell: powershell
+          run: |
+            echo "PROJECT_NAME from config: $env:PROJECT_NAME"
+            & "${{ github.workspace }}\scripts\UiPathRun.ps1" `
+            -processName "$env:PROJECT_NAME" `
+            -uriOrch "$env:ORCH_URL" `
+            -tenantlName "$env:ORCH_TENANT" `
+            -accountForApp "surepymsxjta" `
+            -applicationId "0df2fe2f-f8df-45bd-9777-88ab4ce30689" `
+            -applicationSecret "${{ secrets.ORCH_USER_KEY }}" `
+            -applicationScope "OR.Execution OR.Jobs OR.Robots" `
+            -folder_organization_unit "$env:FOLDER_ORG_UNIT" `
+            -machine "$env:MACHINE" `
+            -robots "$env:ROBOT" `
+            -uipathCliFilePath "$env:UIPATH_CLI_PATH" `
+            -timeout "$env:TIMEOUT_SEC"
+          
   publish-uipath-nuget-package:
     needs: [run-uipath-nuget-package, config]
     if: needs.config.outputs.deploy == 'Yes'
