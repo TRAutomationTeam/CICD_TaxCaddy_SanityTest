@@ -22,6 +22,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: echo-default-env-variables
+        shell: pwsh
         run: |
           Write-Host "Home: $env:HOME"
           Write-Host "GITHUB_WORKFLOW: $env:GITHUB_WORKFLOW"
@@ -140,6 +141,25 @@ jobs:
           if ($line -match '^[ ]*TIMEOUT_SEC[ ]*-[ ]*(.+)$') { echo "TIMEOUT_SEC=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
         }
 
+    - name: Validate Required Secrets
+      shell: pwsh
+      run: |
+        $missingSecrets = @()
+        if ([string]::IsNullOrEmpty("${{ secrets.UIPATH_USER_KEY }}")) { $missingSecrets += "UIPATH_USER_KEY" }
+        if ([string]::IsNullOrEmpty("${{ secrets.UIPATH_ORCH_URL }}")) { $missingSecrets += "UIPATH_ORCH_URL" }
+        if ([string]::IsNullOrEmpty("${{ secrets.UIPATH_TENANT_ID }}")) { $missingSecrets += "UIPATH_TENANT_ID" }
+        if ([string]::IsNullOrEmpty("${{ secrets.UIPATH_ACCOUNT_ID }}")) { $missingSecrets += "UIPATH_ACCOUNT_ID" }
+        
+        if ($missingSecrets.Count -gt 0) {
+          Write-Error "Missing required GitHub secrets: $($missingSecrets -join ', ')"
+          Write-Host "Please configure these secrets in your GitHub repository settings:" -ForegroundColor Yellow
+          foreach ($secret in $missingSecrets) {
+            Write-Host "  - $secret" -ForegroundColor Red
+          }
+          exit 1
+        }
+        Write-Host "All required secrets are configured." -ForegroundColor Green
+
     - name: Print loaded config values
       shell: pwsh
       run: |
@@ -161,6 +181,17 @@ jobs:
         Write-Host "PROJECT_NAME from config: $env:PROJECT_NAME"
         Write-Host "Executing UiPath Run script..."
         
+        # Validate parameters before calling script
+        if ([string]::IsNullOrEmpty($env:PROJECT_NAME)) {
+          Write-Error "PROJECT_NAME is empty or not set"
+          exit 1
+        }
+        
+        if ([string]::IsNullOrEmpty($env:UIPATH_CLI_PATH)) {
+          Write-Error "UIPATH_CLI_PATH is empty or not set"
+          exit 1
+        }
+        
         try {
           & "${{ github.workspace }}\scripts\UiPathRun.ps1" `
             -processName "$env:PROJECT_NAME" `
@@ -168,7 +199,7 @@ jobs:
             -tenantlName "$env:ORCH_TENANT" `
             -accountForApp "$env:ORCH_ACC_NAME" `
             -applicationId "0df2fe2f-f8df-45bd-9777-88ab4ce30689" `
-            -applicationSecret "${{ secrets.ORCH_USER_KEY }}" `
+            -applicationSecret "${{ secrets.UIPATH_USER_KEY }}" `
             -applicationScope "OR.Execution OR.Jobs OR.Robots" `
             -folder_organization_unit "$env:FOLDER_ORG_UNIT" `
             -machine "$env:MACHINE" `
