@@ -15,6 +15,19 @@ param (
 
 try {
     Write-Host "Starting UiPath Job Execution..." -ForegroundColor Yellow
+    
+    # Validate critical parameters
+    if ([string]::IsNullOrWhiteSpace($applicationSecret)) {
+        throw "Application secret is empty or null. Please check the UIPATH_USER_KEY secret in GitHub repository settings."
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($processName)) {
+        throw "Process name is empty or null."
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($uipathCliFilePath)) {
+        throw "UiPath CLI path is empty or null."
+    }
 
     # Validate UiPath CLI exists
     if (-not (Test-Path "$uipathCliFilePath")) {
@@ -25,21 +38,27 @@ try {
     Write-Host "Configuring UiPath CLI..." -ForegroundColor Yellow
 
     # Configure UiPath CLI with error checking
+    Write-Host "Setting account logical name..." -ForegroundColor Cyan
     $configResult = & "$uipathCliFilePath" config set accountLogicalName "$accountForApp" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set accountLogicalName: $configResult" }
 
+    Write-Host "Setting application ID..." -ForegroundColor Cyan
     $configResult = & "$uipathCliFilePath" config set applicationId "$applicationId" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set applicationId: $configResult" }
 
+    Write-Host "Setting application secret..." -ForegroundColor Cyan
     $configResult = & "$uipathCliFilePath" config set applicationSecret "$applicationSecret" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set applicationSecret: $configResult" }
 
+    Write-Host "Setting scopes..." -ForegroundColor Cyan
     $configResult = & "$uipathCliFilePath" config set scopes "$applicationScope" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set scopes: $configResult" }
 
+    Write-Host "Setting orchestrator URL..." -ForegroundColor Cyan
     $configResult = & "$uipathCliFilePath" config set orchestratorUrl "$uriOrch" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set orchestratorUrl: $configResult" }
 
+    Write-Host "Setting tenant logical name..." -ForegroundColor Cyan
     $configResult = & "$uipathCliFilePath" config set tenantLogicalName "$tenantlName" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set tenantLogicalName: $configResult" }
 
@@ -55,6 +74,12 @@ try {
 
     # Start the job
     Write-Host "Starting UiPath job: $processName" -ForegroundColor Yellow
+    Write-Host "Job parameters:" -ForegroundColor Cyan
+    Write-Host "  Process: $processName" -ForegroundColor White
+    Write-Host "  Folder: $folder_organization_unit" -ForegroundColor White
+    Write-Host "  Robot: $robots" -ForegroundColor White
+    Write-Host "  Timeout: $timeout seconds" -ForegroundColor White
+    
     $jobResult = & "$uipathCliFilePath" jobs start `
         --process-name "$processName" `
         --folder "$folder_organization_unit" `
@@ -66,11 +91,18 @@ try {
     }
 
     Write-Host "UiPath Job Triggered Successfully." -ForegroundColor Green
-    Write-Host "Job Details: Process=$processName, Folder=$folder_organization_unit, Robot=$robots, Timeout=$timeout" -ForegroundColor Cyan
+    Write-Host "Job output: $jobResult" -ForegroundColor Cyan
 
 } catch {
     Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host "Script execution failed at line $($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
+    
+    # Additional troubleshooting info
+    Write-Host "`nTroubleshooting Information:" -ForegroundColor Yellow
+    Write-Host "- Check if UIPATH_USER_KEY secret is set in GitHub repository" -ForegroundColor White
+    Write-Host "- Verify UiPath CLI path is correct" -ForegroundColor White
+    Write-Host "- Ensure all required parameters are provided" -ForegroundColor White
+    
     exit 1
 } finally {
     # Optional: Clear sensitive configuration (uncomment if needed)
