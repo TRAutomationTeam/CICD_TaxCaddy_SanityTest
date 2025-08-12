@@ -254,9 +254,14 @@ if($applicationScope -ne ""){
     $ParamList.Add("--applicationScope")
     $ParamList.Add("`"$applicationScope`"")
 }
+if($accountName -ne ""){
+    $ParamList.Add("--accountName")
+    $ParamList.Add($accountName)
+}
 if($userKey -ne ""){
     $ParamList.Add("--token")
     $ParamList.Add($userKey)
+
 }
 if($orchestrator_user -ne ""){
     $ParamList.Add("--username")
