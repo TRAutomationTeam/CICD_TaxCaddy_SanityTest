@@ -118,10 +118,10 @@ jobs:
            scripts/*.ps1
 
   run-uipath-nuget-package:
-  needs: [config]
-  if: needs.config.outputs.run == 'Yes'
-  runs-on: self-hosted
-  steps:
+   needs: [config]
+   if: needs.config.outputs.run == 'Yes'
+   runs-on: self-hosted
+   steps:
     # ✅ ADD THIS STEP FIRST
     - name: Check out repository code
       uses: actions/checkout@v4
@@ -205,12 +205,12 @@ jobs:
           Write-Error "Failed to execute UiPath Run script: $_"
           exit 1
         }
-          
+
   publish-uipath-nuget-package:
-    needs: [run-uipath-nuget-package, config]
-    if: needs.config.outputs.deploy == 'Yes'
-    runs-on: self-hosted
-    steps: 
+     needs: [run-uipath-nuget-package, config]
+     if: needs.config.outputs.deploy == 'Yes'
+     runs-on: self-hosted
+     steps: 
       - name: Check out repository code
         uses: actions/checkout@v4
         
