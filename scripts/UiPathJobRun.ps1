@@ -219,48 +219,16 @@ if($processName -eq "" -or $uriOrch -eq "" -or $tenantlName -eq "")
     exit 1
 }
 
-# Determine authentication method and validate required parameters
-$isExternalApp = $false
-$isRefreshToken = $false
-$isUserPassword = $false
-
-# Check for External App authentication (OAuth2)
-if($accountForApp -ne "" -or $applicationId -ne "" -or $applicationSecret -ne "" -or $applicationScope -ne "")
-{
-    if($accountForApp -eq "" -or $applicationId -eq "" -or $applicationSecret -eq "" -or $applicationScope -eq "")
-    {
-        WriteLog "For External App authentication, all parameters are required: accountForApp, applicationId, applicationSecret, applicationScope"
-        exit 1
-    }
-    $isExternalApp = $true
-    WriteLog "Using External Application (OAuth2) authentication"
-}
-# Check for Refresh Token authentication
-elseif($accountName -ne "" -or $userKey -ne "")
+if($accountForApp -eq "" -or $applicationId -eq "" -or $applicationSecret -eq "" -or $applicationScope -eq "")
 {
     if($accountName -eq "" -or $userKey -eq "")
     {
-        WriteLog "For Refresh Token authentication, both parameters are required: accountName, userKey"
-        exit 1
+        if($orchestrator_user -eq "" -or $orchestrator_pass -eq "")
+        {
+            WriteLog "Fill the required paramters (External App OAuth, API Access, or Username & Password)"
+            exit 1
+        }
     }
-    $isRefreshToken = $true
-    WriteLog "Using Refresh Token authentication"
-}
-# Check for Username/Password authentication
-elseif($orchestrator_user -ne "" -or $orchestrator_pass -ne "")
-{
-    if($orchestrator_user -eq "" -or $orchestrator_pass -eq "")
-    {
-        WriteLog "For Username/Password authentication, both parameters are required: orchestrator_user, orchestrator_pass"
-        exit 1
-    }
-    $isUserPassword = $true
-    WriteLog "Using Username/Password authentication"
-}
-else
-{
-    WriteLog "No valid authentication method provided. Choose one of: External App OAuth, Refresh Token, or Username & Password"
-    exit 1
 }
 
 #Building uipath cli paramters
@@ -270,34 +238,36 @@ $ParamList.Add($processName)
 $ParamList.Add($uriOrch)
 $ParamList.Add($tenantlName)
 
-# Add authentication parameters based on the method being used
-if($isExternalApp)
-{
+if($accountForApp -ne ""){
     $ParamList.Add("--accountForApp")
     $ParamList.Add($accountForApp)
+}
+if($applicationId -ne ""){
     $ParamList.Add("--applicationId")
     $ParamList.Add($applicationId)
+}
+if($applicationSecret -ne ""){
     $ParamList.Add("--applicationSecret")
     $ParamList.Add($applicationSecret)
+}
+if($applicationScope -ne ""){
     $ParamList.Add("--applicationScope")
     $ParamList.Add("`"$applicationScope`"")
 }
-elseif($isRefreshToken)
-{
+
+if($userKey -ne ""){
     $ParamList.Add("--token")
     $ParamList.Add($userKey)
-    $ParamList.Add("--accountName")
-    $ParamList.Add($accountName)
+
 }
-elseif($isUserPassword)
-{
+if($orchestrator_user -ne ""){
     $ParamList.Add("--username")
     $ParamList.Add($orchestrator_user)
+}
+if($orchestrator_pass -ne ""){
     $ParamList.Add("--password")
     $ParamList.Add($orchestrator_pass)
 }
-
-# Add other optional parameters
 if($input_path -ne ""){
     $ParamList.Add("--input_path")
     $ParamList.Add("`"$input_path`"")
