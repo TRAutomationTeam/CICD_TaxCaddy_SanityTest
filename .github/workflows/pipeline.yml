@@ -118,10 +118,13 @@ jobs:
            scripts/*.ps1
 
   run-uipath-nuget-package:
-    needs: [config]
-    if: needs.config.outputs.run == 'Yes'
-    runs-on: self-hosted
-    steps:
+  needs: [config]
+  if: needs.config.outputs.run == 'Yes'
+  runs-on: self-hosted
+  steps:
+    # ✅ ADD THIS STEP FIRST
+    - name: Check out repository code
+      uses: actions/checkout@v4
        
     - name: Load config values from Configue-CICD.txt
       id: load_config
@@ -185,7 +188,7 @@ jobs:
         }
         
         try {
-          # ✅ No need to pass applicationSecret - it's hardcoded in the script
+          # No need to pass applicationSecret - it's hardcoded in the script
           & "${{ github.workspace }}\scripts\UiPathRun.ps1" `
             -processName "$env:PROJECT_NAME" `
             -uriOrch "$env:ORCH_URL" `
@@ -202,7 +205,7 @@ jobs:
           Write-Error "Failed to execute UiPath Run script: $_"
           exit 1
         }
-         
+          
   publish-uipath-nuget-package:
     needs: [run-uipath-nuget-package, config]
     if: needs.config.outputs.deploy == 'Yes'
