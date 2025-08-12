@@ -142,20 +142,20 @@ jobs:
         - name: run Package
           shell: powershell
           run: |
-            echo "PROJECT_NAME from config: $env:PROJECT_NAME"
-            & "${{ github.workspace }}\scripts\UiPathRun.ps1" `
-            -processName "$env:PROJECT_NAME" `
-            -uriOrch "$env:ORCH_URL" `
-            -tenantlName "$env:ORCH_TENANT" `
-            -accountForApp "surepymsxjta" `
-            -applicationId "0df2fe2f-f8df-45bd-9777-88ab4ce30689" `
-            -applicationSecret "${{ secrets.ORCH_USER_KEY }}" `
-            -applicationScope "OR.Execution OR.Jobs OR.Robots" `
-            -folder_organization_unit "$env:FOLDER_ORG_UNIT" `
-            -machine "$env:MACHINE" `
-            -robots "$env:ROBOT" `
-            -uipathCliFilePath "$env:UIPATH_CLI_PATH" `
-            -timeout "$env:TIMEOUT_SEC"
+           echo "PROJECT_NAME from config: $env:PROJECT_NAME"
+           & "${{ github.workspace }}\scripts\UiPathRun.ps1" `
+           -processName "$env:PROJECT_NAME" `
+           -uriOrch "$env:ORCH_URL" `
+           -tenantlName "$env:ORCH_TENANT" `
+           -accountForApp "surepymsxjta" `
+           -applicationId "0df2fe2f-f8df-45bd-9777-88ab4ce30689" `
+           -applicationSecret "${{ secrets.ORCH_USER_KEY }}" `
+           -applicationScope "OR.Execution OR.Jobs OR.Robots" `
+           -folder_organization_unit "$env:FOLDER_ORG_UNIT" `
+           -machine "$env:MACHINE" `
+           -robots "$env:ROBOT" `
+           -uipathCliFilePath "$env:UIPATH_CLI_PATH" `
+           -timeout "$env:TIMEOUT_SEC"
           
   publish-uipath-nuget-package:
     needs: [run-uipath-nuget-package, config]
