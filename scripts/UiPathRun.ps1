@@ -25,6 +25,7 @@ Write-Host "Starting UiPath Job Execution..."
 
 # Connect to Orchestrator
 & "$uipathCliFilePath" login
+
 # Start the job
 & "$uipathCliFilePath" jobs start `
     --process-name "$processName" `
