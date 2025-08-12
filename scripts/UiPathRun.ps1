@@ -4,7 +4,7 @@ param (
     [Parameter(Mandatory=$true)][string]$tenantlName,
     [Parameter(Mandatory=$true)][string]$accountForApp,
     [Parameter(Mandatory=$true)][string]$applicationId,
-    [Parameter(Mandatory=$false)][string]$applicationSecret = "",  # ✅ Made optional
+    [Parameter(Mandatory=$false)][string]$applicationSecret = "",  # Made optional
     [Parameter(Mandatory=$true)][string]$applicationScope,
     [Parameter(Mandatory=$true)][string]$folder_organization_unit,
     [Parameter(Mandatory=$true)][string]$machine,
@@ -20,7 +20,7 @@ try {
     $applicationSecret = 'V$392DIPRL25aBhFn8toXBQ)YyIimxnG8$YhX3FNr))LZ~6T@QpDc3xa09a@nFJ)'
     Write-Host "Using hardcoded application secret (length: $($applicationSecret.Length))" -ForegroundColor Yellow
     
-    # Print debug info
+    # Print parameter values for debugging
     Write-Host "Script Parameters:" -ForegroundColor Cyan
     Write-Host "  processName: $processName" -ForegroundColor White
     Write-Host "  uriOrch: $uriOrch" -ForegroundColor White
@@ -56,42 +56,42 @@ try {
 
     Write-Host "Configuring UiPath CLI..." -ForegroundColor Yellow
 
-    # Configure UiPath CLI with error checking
-    Write-Host "Setting account logical name..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set accountLogicalName "$accountForApp" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Failed to set accountLogicalName: $configResult" }
+    # ✅ FIXED: Use the NEW CLI syntax for v23.10
+    Write-Host "Setting organization..." -ForegroundColor Cyan
+    $configResult = & "$uipathCliFilePath" config set --key "organization" --value "$accountForApp" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Failed to set organization: $configResult" }
 
     Write-Host "Setting application ID..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set applicationId "$applicationId" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Failed to set applicationId: $configResult" }
+    $configResult = & "$uipathCliFilePath" config set --key "clientId" --value "$applicationId" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Failed to set clientId: $configResult" }
 
     Write-Host "Setting application secret..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set applicationSecret "$applicationSecret" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Failed to set applicationSecret: $configResult" }
+    $configResult = & "$uipathCliFilePath" config set --key "clientSecret" --value "$applicationSecret" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Failed to set clientSecret: $configResult" }
 
     Write-Host "Setting scopes..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set scopes "$applicationScope" 2>&1
+    $configResult = & "$uipathCliFilePath" config set --key "scopes" --value "$applicationScope" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set scopes: $configResult" }
 
     Write-Host "Setting orchestrator URL..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set orchestratorUrl "$uriOrch" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Failed to set orchestratorUrl: $configResult" }
+    $configResult = & "$uipathCliFilePath" config set --key "uri" --value "$uriOrch" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Failed to set uri: $configResult" }
 
-    Write-Host "Setting tenant logical name..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set tenantLogicalName "$tenantlName" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Failed to set tenantLogicalName: $configResult" }
+    Write-Host "Setting tenant..." -ForegroundColor Cyan
+    $configResult = & "$uipathCliFilePath" config set --key "tenant" --value "$tenantlName" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Failed to set tenant: $configResult" }
 
     Write-Host "Configuration completed successfully." -ForegroundColor Green
 
-    # Connect to Orchestrator
+    # ✅ FIXED: Use the NEW CLI syntax for authentication
     Write-Host "Authenticating to UiPath Orchestrator..." -ForegroundColor Yellow
-    $loginResult = & "$uipathCliFilePath" login 2>&1
+    $loginResult = & "$uipathCliFilePath" auth login 2>&1
     if ($LASTEXITCODE -ne 0) { 
         throw "Authentication failed: $loginResult" 
     }
     Write-Host "Authentication successful." -ForegroundColor Green
 
-    # Start the job
+    # ✅ FIXED: Use the NEW CLI syntax for starting jobs
     Write-Host "Starting UiPath job: $processName" -ForegroundColor Yellow
     Write-Host "Job parameters:" -ForegroundColor Cyan
     Write-Host "  Process: $processName" -ForegroundColor White
@@ -99,10 +99,10 @@ try {
     Write-Host "  Robot: $robots" -ForegroundColor White
     Write-Host "  Timeout: $timeout seconds" -ForegroundColor White
     
-    $jobResult = & "$uipathCliFilePath" jobs start `
-        --process-name "$processName" `
-        --folder "$folder_organization_unit" `
-        --robot "$robots" `
+    $jobResult = & "$uipathCliFilePath" orchestrator jobs start `
+        --processName "$processName" `
+        --folderName "$folder_organization_unit" `
+        --robotName "$robots" `
         --timeout "$timeout" 2>&1
     
     if ($LASTEXITCODE -ne 0) {
@@ -119,6 +119,7 @@ try {
     # Additional troubleshooting info
     Write-Host "`nTroubleshooting Information:" -ForegroundColor Yellow
     Write-Host "- Using hardcoded application secret" -ForegroundColor White
+    Write-Host "- Using UiPath CLI v23.10 syntax" -ForegroundColor White
     Write-Host "- Verify UiPath CLI path is correct" -ForegroundColor White
     Write-Host "- Ensure all required parameters are provided" -ForegroundColor White
     
