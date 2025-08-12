@@ -122,14 +122,57 @@ jobs:
     if: needs.config.outputs.run == 'Yes'
     runs-on: self-hosted
     steps:
+    # ✅ CRITICAL FIX: Added missing checkout step
     - name: Check out repository code
       uses: actions/checkout@v4
       
+    # ✅ CRITICAL FIX: Added secrets validation
+    - name: Validate GitHub Secrets
+      shell: pwsh
+      run: |
+        Write-Host "Validating GitHub Secrets..." -ForegroundColor Yellow
+        
+        $secrets = @{
+          'UIPATH_USER_KEY' = '${{ secrets.UIPATH_USER_KEY }}'
+          'UIPATH_ORCH_URL' = '${{ secrets.UIPATH_ORCH_URL }}'
+          'UIPATH_TENANT_ID' = '${{ secrets.UIPATH_TENANT_ID }}'
+          'UIPATH_ACCOUNT_ID' = '${{ secrets.UIPATH_ACCOUNT_ID }}'
+        }
+        
+        $missingSecrets = @()
+        foreach ($secretName in $secrets.Keys) {
+          $secretValue = $secrets[$secretName]
+          if ([string]::IsNullOrEmpty($secretValue)) {
+            $missingSecrets += $secretName
+            Write-Host "❌ $secretName is empty or not set" -ForegroundColor Red
+          } else {
+            Write-Host "✅ $secretName is configured (length: $($secretValue.Length))" -ForegroundColor Green
+          }
+        }
+        
+        if ($missingSecrets.Count -gt 0) {
+          Write-Error "Missing or empty GitHub secrets: $($missingSecrets -join ', ')"
+          Write-Host "`nPlease configure these secrets in GitHub repository settings:" -ForegroundColor Yellow
+          Write-Host "Repository → Settings → Secrets and variables → Actions" -ForegroundColor Cyan
+          exit 1
+        }
+        
+        Write-Host "All required secrets are properly configured." -ForegroundColor Green
+        
     - name: Load config values from Configue-CICD.txt
       id: load_config
       shell: pwsh
       run: |
-        $config = Get-Content "${{ github.workspace }}\Configue-CICD.txt"
+        # Check if config file exists
+        $configFile = "${{ github.workspace }}\Configue-CICD.txt"
+        if (-not (Test-Path $configFile)) {
+          Write-Error "Configuration file not found: $configFile"
+          exit 1
+        }
+        
+        Write-Host "Loading configuration from: $configFile" -ForegroundColor Yellow
+        $config = Get-Content $configFile
+        
         foreach ($line in $config) {
           if ($line -match '^[ ]*PROJECT_NAME[ ]*-[ ]*(.+)$') { echo "PROJECT_NAME=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
           if ($line -match '^[ ]*BRANCH[ ]*-[ ]*(.+)$') { echo "BRANCH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
@@ -141,54 +184,50 @@ jobs:
           if ($line -match '^[ ]*TIMEOUT_SEC[ ]*-[ ]*(.+)$') { echo "TIMEOUT_SEC=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
         }
 
-    - name: Validate Required Secrets
-      shell: pwsh
-      run: |
-        $missingSecrets = @()
-        if ([string]::IsNullOrEmpty("${{ secrets.UIPATH_USER_KEY }}")) { $missingSecrets += "UIPATH_USER_KEY" }
-        if ([string]::IsNullOrEmpty("${{ secrets.UIPATH_ORCH_URL }}")) { $missingSecrets += "UIPATH_ORCH_URL" }
-        if ([string]::IsNullOrEmpty("${{ secrets.UIPATH_TENANT_ID }}")) { $missingSecrets += "UIPATH_TENANT_ID" }
-        if ([string]::IsNullOrEmpty("${{ secrets.UIPATH_ACCOUNT_ID }}")) { $missingSecrets += "UIPATH_ACCOUNT_ID" }
-        
-        if ($missingSecrets.Count -gt 0) {
-          Write-Error "Missing required GitHub secrets: $($missingSecrets -join ', ')"
-          Write-Host "Please configure these secrets in your GitHub repository settings:" -ForegroundColor Yellow
-          foreach ($secret in $missingSecrets) {
-            Write-Host "  - $secret" -ForegroundColor Red
-          }
-          exit 1
-        }
-        Write-Host "All required secrets are configured." -ForegroundColor Green
-
     - name: Print loaded config values
       shell: pwsh
       run: |
+        Write-Host "Configuration values loaded:" -ForegroundColor Yellow
         Get-ChildItem Env: | Where-Object { $_.Name -in @(
           'PROJECT_NAME','BRANCH','UIPATH_CLI_PATH',
           'FOLDER_ORG_UNIT','FOLDER_DEPLOY_UNIT',
           'MACHINE','ROBOT','TIMEOUT_SEC'
-        ) } | ForEach-Object { Write-Host "$($_.Name)=$($_.Value)" }
+        ) } | ForEach-Object { Write-Host "  $($_.Name)=$($_.Value)" -ForegroundColor Cyan }
 
     - name: Debug UIPATH_CLI_PATH
       shell: pwsh
       run: |
-        Write-Host "UIPATH_CLI_PATH: '$env:UIPATH_CLI_PATH'"
-        Write-Host "File exists: $(Test-Path -Path $env:UIPATH_CLI_PATH)"
+        Write-Host "UIPATH_CLI_PATH: '$env:UIPATH_CLI_PATH'" -ForegroundColor Yellow
+        if ($env:UIPATH_CLI_PATH) {
+          Write-Host "File exists: $(Test-Path -Path $env:UIPATH_CLI_PATH)" -ForegroundColor Yellow
+        } else {
+          Write-Host "UIPATH_CLI_PATH is not set!" -ForegroundColor Red
+        }
 
     - name: Run Package
       shell: pwsh
       run: |
-        Write-Host "PROJECT_NAME from config: $env:PROJECT_NAME"
-        Write-Host "Executing UiPath Run script..."
+        Write-Host "PROJECT_NAME from config: $env:PROJECT_NAME" -ForegroundColor Yellow
+        Write-Host "Executing UiPath Run script..." -ForegroundColor Yellow
         
-        # Validate parameters before calling script
-        if ([string]::IsNullOrEmpty($env:PROJECT_NAME)) {
-          Write-Error "PROJECT_NAME is empty or not set"
-          exit 1
+        # Validate required parameters
+        $requiredParams = @{
+          'PROJECT_NAME' = $env:PROJECT_NAME
+          'UIPATH_CLI_PATH' = $env:UIPATH_CLI_PATH
+          'FOLDER_ORG_UNIT' = $env:FOLDER_ORG_UNIT
+          'ROBOT' = $env:ROBOT
+          'TIMEOUT_SEC' = $env:TIMEOUT_SEC
         }
         
-        if ([string]::IsNullOrEmpty($env:UIPATH_CLI_PATH)) {
-          Write-Error "UIPATH_CLI_PATH is empty or not set"
+        $missingParams = @()
+        foreach ($param in $requiredParams.Keys) {
+          if ([string]::IsNullOrEmpty($requiredParams[$param])) {
+            $missingParams += $param
+          }
+        }
+        
+        if ($missingParams.Count -gt 0) {
+          Write-Error "Missing required parameters from config: $($missingParams -join ', ')"
           exit 1
         }
         
