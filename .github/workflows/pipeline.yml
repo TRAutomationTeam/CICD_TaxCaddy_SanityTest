@@ -154,7 +154,8 @@ jobs:
             -folder_organization_unit "$env:FOLDER_ORG_UNIT" `
             -machine "$env:MACHINE" `
             -robots "$env:ROBOT" `
-            -uipathCliFilePath "$env:UIPATH
+            -uipathCliFilePath "$env:UIPATH_CLI_PATH" `
+            -timeout "$env:TIMEOUT_SEC"
 
   publish-uipath-nuget-package:
     needs: [run-uipath-nuget-package, config]
