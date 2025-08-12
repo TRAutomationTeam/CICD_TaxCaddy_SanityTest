@@ -122,9 +122,7 @@ jobs:
     if: needs.config.outputs.run == 'Yes'
     runs-on: self-hosted
     steps:
-    - name: Check out repository code
-      uses: actions/checkout@v4
-      
+       
     - name: Load config values from Configue-CICD.txt
       id: load_config
       shell: pwsh
