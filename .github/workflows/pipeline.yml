@@ -114,13 +114,12 @@ jobs:
           path: |
            package/*.*
            scripts/*.ps1
-                    
-  run-uipath-nuget-package:
-  needs: [config]
-  if: needs.config.outputs.run == 'Yes'
-  runs-on: self-hosted
 
-  steps:
+  run-uipath-nuget-package:
+    needs: [config]
+    if: needs.config.outputs.run == 'Yes'
+    runs-on: self-hosted
+    steps:
     - name: Load config values from Configue-CICD.txt
       id: load_config
       shell: pwsh
@@ -168,7 +167,7 @@ jobs:
           -robots "$env:ROBOT" `
           -uipathCliFilePath "$env:UIPATH_CLI_PATH" `
           -timeout "$env:TIMEOUT_SEC"
-          
+         
   publish-uipath-nuget-package:
     needs: [run-uipath-nuget-package, config]
     if: needs.config.outputs.deploy == 'Yes'
