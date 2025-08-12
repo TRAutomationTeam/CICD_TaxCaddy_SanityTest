@@ -14,14 +14,48 @@ param (
 )
 
 try {
-    Write-Host "Starting UiPath Job Execution via API..." -ForegroundColor Yellow
+    Write-Host "=== UiPath Job Execution for CLI 23.10.8753.32995 ===" -ForegroundColor Yellow
     
     # ✅ HARDCODED SECRET
     $applicationSecret = 'V$392DIPRL25aBhFn8toXBQ)YyIimxnG8$YhX3FNr))LZ~6T@QpDc3xa09a@nFJ)'
     Write-Host "Using hardcoded application secret (length: $($applicationSecret.Length))" -ForegroundColor Yellow
     
-    # ✅ ALTERNATIVE: Use direct REST API calls since CLI 23.10.8753.32995 is limited
-    Write-Host "CLI 23.10.8753.32995 detected - using direct API approach" -ForegroundColor Yellow
+    # Print parameter values for debugging
+    Write-Host "Script Parameters:" -ForegroundColor Cyan
+    Write-Host "  processName: $processName" -ForegroundColor White
+    Write-Host "  uriOrch: $uriOrch" -ForegroundColor White
+    Write-Host "  tenantlName: $tenantlName" -ForegroundColor White
+    Write-Host "  accountForApp: $accountForApp" -ForegroundColor White
+    Write-Host "  applicationId: $applicationId" -ForegroundColor White
+    Write-Host "  applicationSecret: [HARDCODED] (length: $($applicationSecret.Length))" -ForegroundColor White
+    Write-Host "  applicationScope: $applicationScope" -ForegroundColor White
+    Write-Host "  folder_organization_unit: $folder_organization_unit" -ForegroundColor White
+    Write-Host "  machine: $machine" -ForegroundColor White
+    Write-Host "  robots: $robots" -ForegroundColor White
+    Write-Host "  uipathCliFilePath: $uipathCliFilePath" -ForegroundColor White
+    Write-Host "  timeout: $timeout" -ForegroundColor White
+    
+    # Validate critical parameters
+    if ([string]::IsNullOrWhiteSpace($applicationSecret)) {
+        throw "Application secret is still empty after hardcoded assignment."
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($processName)) {
+        throw "Process name is empty or null."
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($uipathCliFilePath)) {
+        throw "UiPath CLI path is empty or null."
+    }
+
+    # Validate UiPath CLI exists
+    if (-not (Test-Path "$uipathCliFilePath")) {
+        throw "UiPath CLI not found at: $uipathCliFilePath"
+    }
+    Write-Host "✅ UiPath CLI found at: $uipathCliFilePath" -ForegroundColor Green
+
+    # ✅ ALTERNATIVE APPROACH: Use direct REST API calls since CLI 23.10.8753.32995 is limited
+    Write-Host "Using direct API approach due to CLI 23.10.8753.32995 limitations..." -ForegroundColor Yellow
     
     # Step 1: Get OAuth token
     Write-Host "Step 1: Getting OAuth token..." -ForegroundColor Cyan
@@ -33,9 +67,13 @@ try {
         scope = $applicationScope
     }
     
-    $tokenResponse = Invoke-RestMethod -Uri $tokenUri -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
-    $accessToken = $tokenResponse.access_token
-    Write-Host "✅ OAuth token obtained successfully" -ForegroundColor Green
+    try {
+        $tokenResponse = Invoke-RestMethod -Uri $tokenUri -Method POST -Body $tokenBody -ContentType "application/x-www-form-urlencoded"
+        $accessToken = $tokenResponse.access_token
+        Write-Host "✅ OAuth token obtained successfully" -ForegroundColor Green
+    } catch {
+        throw "Failed to get OAuth token: $($_.Exception.Message)"
+    }
     
     # Step 2: Get Release Key for the process
     Write-Host "Step 2: Getting release information for process: $processName" -ForegroundColor Cyan
@@ -47,13 +85,17 @@ try {
         "X-UIPATH-OrganizationUnitId" = $folder_organization_unit
     }
     
-    $releasesResponse = Invoke-RestMethod -Uri $releasesUri -Method GET -Headers $headers
-    if ($releasesResponse.value.Count -eq 0) {
-        throw "Process '$processName' not found in Orchestrator"
+    try {
+        $releasesResponse = Invoke-RestMethod -Uri $releasesUri -Method GET -Headers $headers
+        if ($releasesResponse.value.Count -eq 0) {
+            throw "Process '$processName' not found in Orchestrator"
+        }
+        
+        $releaseKey = $releasesResponse.value[0].Key
+        Write-Host "✅ Found release key: $releaseKey" -ForegroundColor Green
+    } catch {
+        throw "Failed to get release information: $($_.Exception.Message)"
     }
-    
-    $releaseKey = $releasesResponse.value[0].Key
-    Write-Host "✅ Found release key: $releaseKey" -ForegroundColor Green
     
     # Step 3: Start the job
     Write-Host "Step 3: Starting job..." -ForegroundColor Cyan
@@ -70,10 +112,14 @@ try {
         }
     } | ConvertTo-Json -Depth 5
     
-    $jobResponse = Invoke-RestMethod -Uri $jobsUri -Method POST -Headers $headers -Body $jobBody
-    Write-Host "✅ Job started successfully" -ForegroundColor Green
-    Write-Host "Job ID: $($jobResponse.value[0].Id)" -ForegroundColor Cyan
-    Write-Host "Job Key: $($jobResponse.value[0].Key)" -ForegroundColor Cyan
+    try {
+        $jobResponse = Invoke-RestMethod -Uri $jobsUri -Method POST -Headers $headers -Body $jobBody
+        Write-Host "✅ Job started successfully" -ForegroundColor Green
+        Write-Host "Job ID: $($jobResponse.value[0].Id)" -ForegroundColor Cyan
+        Write-Host "Job Key: $($jobResponse.value[0].Key)" -ForegroundColor Cyan
+    } catch {
+        throw "Failed to start job: $($_.Exception.Message)"
+    }
     
     # Step 4: Monitor job (optional)
     if ($timeout -gt 0) {
@@ -83,38 +129,15 @@ try {
         
         do {
             Start-Sleep -Seconds 5
-            $jobStatusUri = "$uriOrch/$tenantlName/$accountForApp/orchestrator_/odata/Jobs($jobId)"
-            $jobStatus = Invoke-RestMethod -Uri $jobStatusUri -Method GET -Headers $headers
-            
-            Write-Host "Job Status: $($jobStatus.State)" -ForegroundColor Yellow
-            
-            if ($jobStatus.State -in @("Successful", "Failed", "Stopped")) {
-                Write-Host "✅ Job completed with status: $($jobStatus.State)" -ForegroundColor Green
-                if ($jobStatus.State -eq "Failed") {
-                    Write-Host "❌ Job failed with error: $($jobStatus.Info)" -ForegroundColor Red
-                }
-                break
-            }
-            
-            $elapsed = (Get-Date) - $startTime
-        } while ($elapsed.TotalSeconds -lt $timeout)
-        
-        if ($elapsed.TotalSeconds -ge $timeout) {
-            Write-Host "⚠️ Job monitoring timed out after $timeout seconds" -ForegroundColor Yellow
-        }
-    }
-
-    Write-Host "UiPath Job Execution Completed Successfully." -ForegroundColor Green
-
-} catch {
-    Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Script execution failed at line $($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
-    
-    Write-Host "`nTroubleshooting Information:" -ForegroundColor Yellow
-    Write-Host "- Using direct API calls due to CLI 23.10.8753.32995 limitations" -ForegroundColor White
-    Write-Host "- Verify OAuth application credentials are correct" -ForegroundColor White
-    Write-Host "- Check process name exists in specified folder" -ForegroundColor White
-    Write-Host "- Ensure robot is available and licensed" -ForegroundColor White
-    
-    exit 1
-}
+            try {
+                $jobStatusUri = "$uriOrch/$tenantlName/$accountForApp/orchestrator_/odata/Jobs($jobId)"
+                $jobStatus = Invoke-RestMethod -Uri $jobStatusUri -Method GET -Headers $headers
+                
+                Write-Host "Job Status: $($jobStatus.State)" -ForegroundColor Yellow
+                
+                if ($jobStatus.State -in @("Successful", "Failed", "Stopped")) {
+                    Write-Host "✅ Job completed with status: $($jobStatus.State)" -ForegroundColor Green
+                    if ($jobStatus.State -eq "Failed") {
+                        Write-Host "❌ Job failed with error: $($jobStatus.Info)" -ForegroundColor Red
+                    }
+                    
