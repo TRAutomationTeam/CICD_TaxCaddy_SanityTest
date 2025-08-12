@@ -56,34 +56,36 @@ try {
 
     Write-Host "Configuring UiPath CLI..." -ForegroundColor Yellow
 
-    # ✅ FIXED: Use the NEW CLI syntax for v23.10
+    # ✅ FIXED: Use the correct CLI syntax for v23.10 (uipath command, not uipcli)
+    # The CLI executable is uipcli.exe but the command structure is different
+    
     Write-Host "Setting organization..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set --key "organization" --value "$accountForApp" 2>&1
+    $configResult = & "$uipathCliFilePath" config set organization "$accountForApp" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set organization: $configResult" }
 
-    Write-Host "Setting application ID..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set --key "clientId" --value "$applicationId" 2>&1
+    Write-Host "Setting client ID..." -ForegroundColor Cyan
+    $configResult = & "$uipathCliFilePath" config set clientId "$applicationId" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set clientId: $configResult" }
 
-    Write-Host "Setting application secret..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set --key "clientSecret" --value "$applicationSecret" 2>&1
+    Write-Host "Setting client secret..." -ForegroundColor Cyan
+    $configResult = & "$uipathCliFilePath" config set clientSecret "$applicationSecret" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set clientSecret: $configResult" }
 
     Write-Host "Setting scopes..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set --key "scopes" --value "$applicationScope" 2>&1
+    $configResult = & "$uipathCliFilePath" config set scopes "$applicationScope" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set scopes: $configResult" }
 
     Write-Host "Setting orchestrator URL..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set --key "uri" --value "$uriOrch" 2>&1
+    $configResult = & "$uipathCliFilePath" config set uri "$uriOrch" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set uri: $configResult" }
 
     Write-Host "Setting tenant..." -ForegroundColor Cyan
-    $configResult = & "$uipathCliFilePath" config set --key "tenant" --value "$tenantlName" 2>&1
+    $configResult = & "$uipathCliFilePath" config set tenant "$tenantlName" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to set tenant: $configResult" }
 
     Write-Host "Configuration completed successfully." -ForegroundColor Green
 
-    # ✅ FIXED: Use the NEW CLI syntax for authentication
+    # ✅ FIXED: Use the correct CLI syntax for authentication
     Write-Host "Authenticating to UiPath Orchestrator..." -ForegroundColor Yellow
     $loginResult = & "$uipathCliFilePath" auth login 2>&1
     if ($LASTEXITCODE -ne 0) { 
@@ -91,7 +93,7 @@ try {
     }
     Write-Host "Authentication successful." -ForegroundColor Green
 
-    # ✅ FIXED: Use the NEW CLI syntax for starting jobs
+    # ✅ FIXED: Use the correct CLI syntax for starting jobs
     Write-Host "Starting UiPath job: $processName" -ForegroundColor Yellow
     Write-Host "Job parameters:" -ForegroundColor Cyan
     Write-Host "  Process: $processName" -ForegroundColor White
@@ -99,10 +101,10 @@ try {
     Write-Host "  Robot: $robots" -ForegroundColor White
     Write-Host "  Timeout: $timeout seconds" -ForegroundColor White
     
-    $jobResult = & "$uipathCliFilePath" orchestrator jobs start `
-        --processName "$processName" `
-        --folderName "$folder_organization_unit" `
-        --robotName "$robots" `
+    # Use the correct command structure for UiPath CLI v23.10
+    $jobResult = & "$uipathCliFilePath" orchestrator jobs start-jobs `
+        --folder-id "$folder_organization_unit" `
+        --start-info "ReleaseKey=$processName;RuntimeType=Unattended" `
         --timeout "$timeout" 2>&1
     
     if ($LASTEXITCODE -ne 0) {
@@ -122,6 +124,8 @@ try {
     Write-Host "- Using UiPath CLI v23.10 syntax" -ForegroundColor White
     Write-Host "- Verify UiPath CLI path is correct" -ForegroundColor White
     Write-Host "- Ensure all required parameters are provided" -ForegroundColor White
+    Write-Host "- Check process name exists in Orchestrator" -ForegroundColor White
+    Write-Host "- Verify folder permissions and robot assignments" -ForegroundColor White
     
     exit 1
 } finally {
