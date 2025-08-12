@@ -4,7 +4,7 @@ param (
     [Parameter(Mandatory=$true)][string]$tenantlName,
     [Parameter(Mandatory=$true)][string]$accountForApp,
     [Parameter(Mandatory=$true)][string]$applicationId,
-    [Parameter(Mandatory=$false)][string]$applicationSecret = "",  # Changed to optional with default
+    [Parameter(Mandatory=$false)][string]$applicationSecret = "",  # Made optional
     [Parameter(Mandatory=$true)][string]$applicationScope,
     [Parameter(Mandatory=$true)][string]$folder_organization_unit,
     [Parameter(Mandatory=$true)][string]$machine,
@@ -15,12 +15,28 @@ param (
 
 try {
     Write-Host "Starting UiPath Job Execution..." -ForegroundColor Yellow
+    Write-Host "PowerShell Version: $($PSVersionTable.PSVersion)" -ForegroundColor Cyan
     
     # Use hardcoded secret if not provided or empty
     if ([string]::IsNullOrWhiteSpace($applicationSecret)) {
-        Write-Host "Using hardcoded application secret..." -ForegroundColor Yellow
+        Write-Host "Using fallback hardcoded application secret..." -ForegroundColor Yellow
         $applicationSecret = 'V$392DIPRL25aBhFn8toXBQ)YyIimxnG8$YhX3FNr))LZ~6T@QpDc3xa09a@nFJ)'
     }
+    
+    # Print parameter values for debugging
+    Write-Host "Script Parameters:" -ForegroundColor Cyan
+    Write-Host "  processName: $processName" -ForegroundColor White
+    Write-Host "  uriOrch: $uriOrch" -ForegroundColor White
+    Write-Host "  tenantlName: $tenantlName" -ForegroundColor White
+    Write-Host "  accountForApp: $accountForApp" -ForegroundColor White
+    Write-Host "  applicationId: $applicationId" -ForegroundColor White
+    Write-Host "  applicationSecret: [HIDDEN] (length: $($applicationSecret.Length))" -ForegroundColor White
+    Write-Host "  applicationScope: $applicationScope" -ForegroundColor White
+    Write-Host "  folder_organization_unit: $folder_organization_unit" -ForegroundColor White
+    Write-Host "  machine: $machine" -ForegroundColor White
+    Write-Host "  robots: $robots" -ForegroundColor White
+    Write-Host "  uipathCliFilePath: $uipathCliFilePath" -ForegroundColor White
+    Write-Host "  timeout: $timeout" -ForegroundColor White
     
     # Validate critical parameters
     if ([string]::IsNullOrWhiteSpace($applicationSecret)) {
