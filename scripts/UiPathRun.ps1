@@ -4,7 +4,7 @@ param (
     [Parameter(Mandatory=$true)][string]$tenantlName,
     [Parameter(Mandatory=$true)][string]$accountForApp,
     [Parameter(Mandatory=$true)][string]$applicationId,
-    [Parameter(Mandatory=$false)][AllowEmptyString()][string]$applicationSecret = "",  # ✅ FIXED: Made optional and allow empty string
+    [Parameter(Mandatory=$false)][string]$applicationSecret = "",  # Made optional since we're hardcoding
     [Parameter(Mandatory=$true)][string]$applicationScope,
     [Parameter(Mandatory=$true)][string]$folder_organization_unit,
     [Parameter(Mandatory=$true)][string]$machine,
@@ -17,20 +17,18 @@ try {
     Write-Host "Starting UiPath Job Execution..." -ForegroundColor Yellow
     Write-Host "PowerShell Version: $($PSVersionTable.PSVersion)" -ForegroundColor Cyan
     
-    # ✅ ADDED: Use hardcoded secret if not provided or empty
-    if ([string]::IsNullOrWhiteSpace($applicationSecret)) {
-        Write-Host "Using fallback hardcoded application secret..." -ForegroundColor Yellow
-        $applicationSecret = 'V$392DIPRL25aBhFn8toXBQ)YyIimxnG8$YhX3FNr))LZ~6T@QpDc3xa09a@nFJ)'
-    }
+    # ✅ HARDCODED SECRET - Always use this value regardless of what's passed
+    $applicationSecret = 'V$392DIPRL25aBhFn8toXBQ)YyIimxnG8$YhX3FNr))LZ~6T@QpDc3xa09a@nFJ)'
+    Write-Host "Using hardcoded application secret (length: $($applicationSecret.Length))" -ForegroundColor Yellow
     
-    # ✅ ADDED: Print parameter values for debugging
+    # Print parameter values for debugging
     Write-Host "Script Parameters:" -ForegroundColor Cyan
     Write-Host "  processName: $processName" -ForegroundColor White
     Write-Host "  uriOrch: $uriOrch" -ForegroundColor White
     Write-Host "  tenantlName: $tenantlName" -ForegroundColor White
     Write-Host "  accountForApp: $accountForApp" -ForegroundColor White
     Write-Host "  applicationId: $applicationId" -ForegroundColor White
-    Write-Host "  applicationSecret: [HIDDEN] (length: $($applicationSecret.Length))" -ForegroundColor White
+    Write-Host "  applicationSecret: [HARDCODED] (length: $($applicationSecret.Length))" -ForegroundColor White
     Write-Host "  applicationScope: $applicationScope" -ForegroundColor White
     Write-Host "  folder_organization_unit: $folder_organization_unit" -ForegroundColor White
     Write-Host "  machine: $machine" -ForegroundColor White
@@ -40,7 +38,7 @@ try {
     
     # Validate critical parameters
     if ([string]::IsNullOrWhiteSpace($applicationSecret)) {
-        throw "Application secret is still empty after hardcoded fallback."
+        throw "Application secret is still empty after hardcoded assignment."
     }
     
     if ([string]::IsNullOrWhiteSpace($processName)) {
@@ -121,7 +119,7 @@ try {
     
     # Additional troubleshooting info
     Write-Host "`nTroubleshooting Information:" -ForegroundColor Yellow
-    Write-Host "- Check if hardcoded application secret is correct" -ForegroundColor White
+    Write-Host "- Using hardcoded application secret" -ForegroundColor White
     Write-Host "- Verify UiPath CLI path is correct" -ForegroundColor White
     Write-Host "- Ensure all required parameters are provided" -ForegroundColor White
     
