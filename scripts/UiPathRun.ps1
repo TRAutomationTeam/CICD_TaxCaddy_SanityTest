@@ -4,7 +4,7 @@ param (
     [Parameter(Mandatory=$true)][string]$tenantlName,
     [Parameter(Mandatory=$true)][string]$accountForApp,
     [Parameter(Mandatory=$true)][string]$applicationId,
-    [Parameter(Mandatory=$true)][string]$applicationSecret,
+    [Parameter(Mandatory=$false)][string]$applicationSecret = "",  # Changed to optional with default
     [Parameter(Mandatory=$true)][string]$applicationScope,
     [Parameter(Mandatory=$true)][string]$folder_organization_unit,
     [Parameter(Mandatory=$true)][string]$machine,
@@ -16,9 +16,15 @@ param (
 try {
     Write-Host "Starting UiPath Job Execution..." -ForegroundColor Yellow
     
+    # Use hardcoded secret if not provided or empty
+    if ([string]::IsNullOrWhiteSpace($applicationSecret)) {
+        Write-Host "Using hardcoded application secret..." -ForegroundColor Yellow
+        $applicationSecret = 'V$392DIPRL25aBhFn8toXBQ)YyIimxnG8$YhX3FNr))LZ~6T@QpDc3xa09a@nFJ)'
+    }
+    
     # Validate critical parameters
     if ([string]::IsNullOrWhiteSpace($applicationSecret)) {
-        throw "Application secret is empty or null. Please check the UIPATH_USER_KEY secret in GitHub repository settings."
+        throw "Application secret is still empty after hardcoded fallback."
     }
     
     if ([string]::IsNullOrWhiteSpace($processName)) {
@@ -99,7 +105,7 @@ try {
     
     # Additional troubleshooting info
     Write-Host "`nTroubleshooting Information:" -ForegroundColor Yellow
-    Write-Host "- Check if UIPATH_USER_KEY secret is set in GitHub repository" -ForegroundColor White
+    Write-Host "- Check if hardcoded application secret is correct" -ForegroundColor White
     Write-Host "- Verify UiPath CLI path is correct" -ForegroundColor White
     Write-Host "- Ensure all required parameters are provided" -ForegroundColor White
     
