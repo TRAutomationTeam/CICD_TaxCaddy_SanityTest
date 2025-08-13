@@ -1,382 +1,285 @@
 <#
 .SYNOPSIS 
-    Run UiPath Orchestrator Job via Orchestrator API with External Application authentication.
-
-.DESCRIPTION 
-    This script triggers an Orchestrator job using direct API calls with OAuth2 External Application authentication.
-    Updated to align with GitHub Actions workflow requirements.
+    Run UiPath Orchestrator Job via API with External Application authentication.
+    UPDATED: Works around 403 Forbidden errors by using Releases endpoint
 #>
 Param (
-    #Required
-    [Parameter(Mandatory=$true, Position = 0)]
-    [string] $processName = "", #Process Name (pos. 0)           Required.
-    [Parameter(Mandatory=$true, Position = 1)]
-    [string] $uriOrch = "", #Orchestrator URL (pos. 1)       Required. The URL of the Orchestrator instance.
-    [Parameter(Mandatory=$true, Position = 2)]
-    [string] $tenantlName = "", #Orchestrator Tenant (pos. 2)    Required. The tenant of the Orchestrator instance.
-
-    #External Apps (Option 1) - ONLY these will be used for authentication
     [Parameter(Mandatory=$true)]
-    [string] $accountForApp = "", 
+    [string] $processName = "",
     [Parameter(Mandatory=$true)]
-    [string] $applicationId = "", 
+    [string] $uriOrch = "",
     [Parameter(Mandatory=$true)]
-    [string] $applicationSecret = "", 
+    [string] $tenantlName = "",
     [Parameter(Mandatory=$true)]
-    [string] $applicationScope = "", 
-
-    # Other job parameters
-    [string] $input_path = "", 
-    [string] $jobscount = "1", # Default to 1
-    [string] $result_path = "", 
-    [string] $priority = "Normal", 
-    [string] $robots = "", 
-    [string] $folder_organization_unit = "", 
-    [string] $machine = "", 
-    [string] $timeout = "1800", 
-    [string] $fail_when_job_fails = "true", 
-    [string] $wait = "true", 
-    [string] $job_type = "Unattended" # Assuming unattended for CI/CD
+    [string] $accountForApp = "",
+    [Parameter(Mandatory=$true)]
+    [string] $applicationId = "",
+    [Parameter(Mandatory=$true)]
+    [string] $applicationSecret = "",
+    [Parameter(Mandatory=$true)]
+    [string] $applicationScope = "",
+    [string] $input_path = "",
+    [string] $jobscount = "1",
+    [string] $result_path = "",
+    [string] $priority = "Normal",
+    [string] $robots = "",
+    [string] $folder_organization_unit = "",
+    [string] $machine = "",
+    [string] $timeout = "1800",
+    [string] $fail_when_job_fails = "true",
+    [string] $wait = "true",
+    [string] $job_type = "Unattended"
 )
 
 function WriteLog {
     Param(
         [Parameter(Mandatory=$true)]
         [string]$Message,
-        [switch]$err,
-        [switch]$noTimestamp
+        [switch]$err
     )
-    $timestamp = if ($noTimestamp) { "" } else { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') " }
+    $timestamp = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') "
     $logEntry = "$timestamp$Message"
     if ($err) {
         Write-Error $logEntry
-        if ($debugLog -and (Test-Path (Split-Path $debugLog -Parent))) {
-            Add-Content -Path $debugLog -Value $logEntry -ErrorAction SilentlyContinue
-        }
     } else {
         Write-Host $logEntry
-        if ($debugLog -and (Test-Path (Split-Path $debugLog -Parent))) {
-            Add-Content -Path $debugLog -Value $logEntry -ErrorAction SilentlyContinue
-        }
     }
-}
-
-# Running Path for log file
-$scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
-$debugLog = "$scriptPath\orchestrator-job-run.log"
-
-# Create log directory if it doesn't exist
-$logDir = Split-Path $debugLog -Parent
-if (-not (Test-Path $logDir)) {
-    New-Item -Path $logDir -ItemType Directory -Force | Out-Null
-}
-
-# Clear previous log file on each run for fresh logs
-if (Test-Path $debugLog) {
-    Remove-Item $debugLog -Force -ErrorAction SilentlyContinue
 }
 
 WriteLog "🚀 Starting UiPath Orchestrator Job via API..."
-WriteLog "Script Parameters:"
-WriteLog "  - Process Name: $processName"
-WriteLog "  - Orchestrator URL: $uriOrch"
-WriteLog "  - Tenant: $tenantlName"
-WriteLog "  - Account: $accountForApp"
-WriteLog "  - Folder: $folder_organization_unit"
-WriteLog "  - Robots: $robots"
-WriteLog "  - Machine: $machine"
-WriteLog "  - Timeout: $timeout"
+WriteLog "Available scopes: $applicationScope"
 
-# Define the base URL for Orchestrator OData API calls
+# Define URLs
 $orchestratorApiBase = "$uriOrch/orchestrator_"
-WriteLog "Orchestrator API Base for OData calls: $orchestratorApiBase"
+$identityServerRoot = if ($uriOrch -match "^(https?:\/\/[^\/]+)\/") { $Matches[1] } else { $uriOrch }
 
-# Determine the Identity Server Base URL from $uriOrch
-$identityServerRoot = ""
-if ($uriOrch -match "^(https?:\/\/[^\/]+)\/") {
-    $identityServerRoot = $Matches[1]
-} else {
-    $identityServerRoot = $uriOrch
+WriteLog "Orchestrator API Base: $orchestratorApiBase"
+WriteLog "Identity Server Root: $identityServerRoot"
+
+# --- 1. Get Access Token ---
+WriteLog "🔐 Getting access token..."
+$identityUrl = "$identityServerRoot/identity_/connect/token"
+$bodyParams = @{
+    "grant_type"    = "client_credentials"
+    "client_id"     = $applicationId
+    "client_secret" = $applicationSecret
+    "scope"         = $applicationScope
 }
-WriteLog "Identity Server Root URL: $identityServerRoot"
 
-# --- 1. Get Access Token from External Application Credentials ---
-Function Get-OrchestratorAccessToken {
-    Param (
-        [string]$accountName,
-        [string]$applicationId,
-        [string]$applicationSecret,
-        [string]$applicationScope,
-        [string]$identityBaseUrl
-    )
-    WriteLog "🔐 Attempting to get access token for external application..."
-    
-    $identityUrl = "$($identityBaseUrl)/identity_/connect/token" 
-    WriteLog "Identity URL for token: $identityUrl"
-
-    $bodyParams = @{
-        "grant_type"    = "client_credentials"
-        "client_id"     = $applicationId
-        "client_secret" = $applicationSecret
-        "scope"         = $applicationScope
-    }
-    
-    $maskedBodyForLog = "grant_type=client_credentials&client_id=$applicationId&client_secret=***MASKED***&scope=$applicationScope"
-    WriteLog "Token request body (masked): $maskedBodyForLog"
-
-    try {
-        WriteLog "Invoking token request..."
-        $response = Invoke-RestMethod -Uri $identityUrl -Method Post -ContentType "application/x-www-form-urlencoded" -Body $bodyParams -ErrorAction Stop 
-        
-        if ($response.access_token) {
-            WriteLog "✅ Successfully retrieved access token"
-            return $response.access_token
-        } else {
-            WriteLog "❌ Failed to retrieve access token. Response: $($response | ConvertTo-Json)" -err
-            exit 1
-        }
-    }
-    catch {
-        WriteLog "❌ Error getting access token: $($_.Exception.Message)" -err
-        WriteLog "Check identity URL: $identityUrl and external app credentials." -err
-        
-        if ($_.Exception.Response) {
-            try {
-                $errorResponseStream = $_.Exception.Response.GetResponseStream()
-                $reader = New-Object System.IO.StreamReader($errorResponseStream)
-                $responseBody = $reader.ReadToEnd()
-                WriteLog "Full error response body: $responseBody" -err
-            } catch {
-                WriteLog "Could not read error response: $($_.Exception.Message)" -err
-            }
-        }
+try {
+    $response = Invoke-RestMethod -Uri $identityUrl -Method Post -ContentType "application/x-www-form-urlencoded" -Body $bodyParams -ErrorAction Stop
+    if ($response.access_token) {
+        WriteLog "✅ Successfully retrieved access token"
+        $accessToken = $response.access_token
+    } else {
+        WriteLog "❌ Failed to retrieve access token" -err
         exit 1
     }
+} catch {
+    WriteLog "❌ Error getting access token: $($_.Exception.Message)" -err
+    exit 1
 }
 
-# Get access token
-$accessToken = Get-OrchestratorAccessToken `
-    -accountName $accountForApp `
-    -applicationId $applicationId `
-    -applicationSecret $applicationSecret `
-    -applicationScope $applicationScope `
-    -identityBaseUrl $identityServerRoot 
-
-# Set up headers for API calls
+# Set up headers
 $headers = @{
     "Authorization" = "Bearer $accessToken"
     "X-UIPATH-TenantName" = $tenantlName
     "X-UIPATH-AccountName" = $accountForApp
     "Content-Type" = "application/json"
 }
-WriteLog "Headers configured for API calls"
 
-# --- 2. Resolve IDs (Folder, Process, Robots/Machine) ---
-Function Resolve-OrchestratorId {
-    Param (
-        [hashtable]$headers,
-        [string]$endpoint,
-        [string]$nameToResolve,
-        [string]$filterProperty,
-        [string]$idProperty
-    )
-    WriteLog "🔍 Resolving $endpoint '$nameToResolve'..."
+# --- 2. Get Folder ID ---
+try {
+    WriteLog "📁 Finding folder '$folder_organization_unit'..."
+    $foldersUri = "$orchestratorApiBase/odata/Folders"
+    $foldersResponse = Invoke-RestMethod -Uri $foldersUri -Method Get -Headers $headers -ErrorAction Stop
     
-    if ($endpoint -eq "Folders") {
-        $uri = "$orchestratorApiBase/odata/Folders"
-        WriteLog "Getting all folders: $uri"
-        
-        try {
-            $response = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers -ErrorAction Stop
-            WriteLog "Retrieved $($response.value.Count) folders"
-            
-            $matchingFolder = $response.value | Where-Object { $_.($filterProperty) -eq $nameToResolve }
-            if ($matchingFolder) {
-                WriteLog "✅ Found '$nameToResolve' ID: $($matchingFolder.($idProperty))"
-                return $matchingFolder.($idProperty)
-            } else {
-                WriteLog "❌ Could not find folder '$nameToResolve'. Available folders:" -err
-                $response.value | ForEach-Object { WriteLog "  - $($_.DisplayName) (ID: $($_.Id))" }
-                exit 1
-            }
-        }
-        catch {
-            WriteLog "❌ Error getting folders: $($_.Exception.Message)" -err
-            exit 1
-        }
-    } else {
-        $uri = "$orchestratorApiBase/odata/$endpoint`?`$filter=($filterProperty eq '$nameToResolve')"
-        WriteLog "Resolution URI: $uri"
-
-        try {
-            $response = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers -ErrorAction Stop
-            if ($response.value -and $response.value.Count -gt 0) {
-                WriteLog "✅ Found '$nameToResolve' ID: $($response.value[0].($idProperty))"
-                return $response.value[0].($idProperty)
-            } else {
-                WriteLog "❌ Could not find $endpoint '$nameToResolve'" -err
-                exit 1
-            }
-        }
-        catch {
-            WriteLog "❌ Error resolving $endpoint '$nameToResolve': $($_.Exception.Message)" -err
-            exit 1
-        }
-    }
-}
-
-# Resolve folder first to get the OrganizationUnitId
-WriteLog "📁 Resolving folder organization unit..."
-$folderId = Resolve-OrchestratorId -headers $headers -endpoint "Folders" -nameToResolve $folder_organization_unit -filterProperty "DisplayName" -idProperty "Id"
-
-# Add the OrganizationUnitId header for folder-scoped requests
-$headers."X-UIPATH-OrganizationUnitId" = $folderId
-WriteLog "Updated headers with folder context"
-
-# Resolve process
-WriteLog "⚙️ Resolving process..."
-$processKey = Resolve-OrchestratorId -headers $headers -endpoint "Processes" -nameToResolve $processName -filterProperty "ProcessKey" -idProperty "Key"
-
-# Robot ID resolution
-$targetRobotIds = @()
-if ($robots -ne "") {
-    WriteLog "🤖 Resolving robot IDs..."
-    $robotNames = $robots.Split(',') | ForEach-Object { $_.Trim() }
-    foreach ($robotName in $robotNames) {
-        $robotId = Resolve-OrchestratorId -headers $headers -endpoint "Robots" -nameToResolve $robotName -filterProperty "Name" -idProperty "Id"
-        if ($robotId) { $targetRobotIds += $robotId }
-    }
-    if ($targetRobotIds.Count -eq 0) {
-        WriteLog "❌ No valid Robot IDs found for names: $robots" -err
+    $folder = $foldersResponse.value | Where-Object { $_.DisplayName -eq $folder_organization_unit }
+    if (-not $folder) {
+        WriteLog "❌ Folder '$folder_organization_unit' not found" -err
+        WriteLog "Available folders:" -err
+        $foldersResponse.value | ForEach-Object { WriteLog "  - $($_.DisplayName)" }
         exit 1
     }
-    WriteLog "✅ Resolved Robot IDs: $($targetRobotIds -join ', ')"
-} else {
-    WriteLog "❌ Robot names must be specified for job execution" -err
+    
+    $folderId = $folder.Id
+    WriteLog "✅ Found folder ID: $folderId"
+    
+    # Add folder context to headers
+    $headers."X-UIPATH-OrganizationUnitId" = $folderId
+    
+} catch {
+    WriteLog "❌ Error accessing folders: $($_.Exception.Message)" -err
     exit 1
 }
 
-# --- 3. Construct Start Job Request Body ---
-WriteLog "📝 Constructing job start request..."
+# --- 3. Resolve Process Using Multiple Methods ---
+WriteLog "⚙️ Attempting to resolve process '$processName'..."
+
+$processKey = $null
+$attempts = @(
+    @{
+        Method = "Releases endpoint (recommended for limited scopes)"
+        Uri = "$orchestratorApiBase/odata/Releases?`$filter=(ProcessKey eq '$processName')"
+    },
+    @{
+        Method = "Processes endpoint (fallback)"
+        Uri = "$orchestratorApiBase/odata/Processes?`$filter=(ProcessKey eq '$processName')"
+    },
+    @{
+        Method = "Direct ProcessKey usage"
+        Uri = $null
+        DirectKey = $processName
+    }
+)
+
+foreach ($attempt in $attempts) {
+    try {
+        WriteLog "Trying: $($attempt.Method)"
+        
+        if ($attempt.Uri) {
+            WriteLog "URI: $($attempt.Uri)"
+            $response = Invoke-RestMethod -Uri $attempt.Uri -Method Get -Headers $headers -ErrorAction Stop
+            
+            if ($response.value -and $response.value.Count -gt 0) {
+                $processKey = $response.value[0].Key
+                WriteLog "✅ Found process using $($attempt.Method)! Key: $processKey"
+                break
+            } else {
+                WriteLog "No results with $($attempt.Method)"
+            }
+        } else {
+            # Direct key usage
+            $processKey = $attempt.DirectKey
+            WriteLog "✅ Using ProcessKey directly: $processKey"
+            break
+        }
+    }
+    catch {
+        WriteLog "Failed with $($attempt.Method): $($_.Exception.Message)"
+        if ($_.Exception.Response.StatusCode -eq 403) {
+            WriteLog "403 Forbidden - insufficient permissions for $($attempt.Method)"
+        }
+    }
+}
+
+if (-not $processKey) {
+    WriteLog "❌ Could not resolve process '$processName' with any method" -err
+    WriteLog "🔧 SOLUTIONS:" -err
+    WriteLog "   1. Verify the process name is correct: '$processName'" -err
+    WriteLog "   2. Ensure the process is published to the '$folder_organization_unit' folder" -err
+    WriteLog "   3. Ask admin to add process-related scopes to your external app" -err
+    exit 1
+}
+
+# --- 4. Resolve Robot ---
+if (-not $robots) {
+    WriteLog "❌ Robot name is required" -err
+    exit 1
+}
+
+try {
+    WriteLog "🤖 Resolving robot '$robots'..."
+    $robotUri = "$orchestratorApiBase/odata/Robots?`$filter=(Name eq '$robots')"
+    $robotResponse = Invoke-RestMethod -Uri $robotUri -Method Get -Headers $headers -ErrorAction Stop
+    
+    if (-not $robotResponse.value -or $robotResponse.value.Count -eq 0) {
+        WriteLog "❌ Robot '$robots' not found" -err
+        
+        # Try to list available robots for debugging
+        try {
+            $allRobotsUri = "$orchestratorApiBase/odata/Robots"
+            $allRobots = Invoke-RestMethod -Uri $allRobotsUri -Method Get -Headers $headers -ErrorAction Stop
+            WriteLog "Available robots in this folder:" -err
+            $allRobots.value | ForEach-Object { WriteLog "  - $($_.Name)" }
+        } catch {
+            WriteLog "Could not retrieve robot list for debugging" -err
+        }
+        exit 1
+    }
+    
+    $robotId = $robotResponse.value[0].Id
+    WriteLog "✅ Found robot ID: $robotId"
+    
+} catch {
+    WriteLog "❌ Error resolving robot: $($_.Exception.Message)" -err
+    exit 1
+}
+
+# --- 5. Start Job ---
+WriteLog "🚀 Starting job..."
 $startJobBody = @{
     "startInfo" = @{
         "ReleaseKey" = $processKey
         "Strategy" = "Specific"
-        "RobotIds" = $targetRobotIds
+        "RobotIds" = @($robotId)
         "JobsCount" = [int]$jobscount
         "JobPriority" = $priority
-        "InputArguments" = ""
+        "InputArguments" = "{}"
     }
 } | ConvertTo-Json -Depth 10
 
-WriteLog "Job request body prepared"
-
-# --- 4. Start the Job ---
-$startJobUri = "$orchestratorApiBase/odata/Jobs/UiPath.Server.Configuration.OData.StartJobs"
-WriteLog "🚀 Starting job via API: $startJobUri"
-
 try {
-    $startJobResponse = Invoke-RestMethod -Uri $startJobUri -Method Post -Headers $headers -Body $startJobBody -ErrorAction Stop
-    WriteLog "✅ Job started successfully"
+    $startJobUri = "$orchestratorApiBase/odata/Jobs/UiPath.Server.Configuration.OData.StartJobs"
+    WriteLog "Job start URI: $startJobUri"
     
-    if ($startJobResponse.value -and $startJobResponse.value.Count -gt 0) {
-        $jobIds = $startJobResponse.value | ForEach-Object { $_.Id }
-        WriteLog "Started job IDs: $($jobIds -join ', ')"
+    $jobResponse = Invoke-RestMethod -Uri $startJobUri -Method Post -Headers $headers -Body $startJobBody -ErrorAction Stop
+    
+    if ($jobResponse.value -and $jobResponse.value.Count -gt 0) {
+        $jobId = $jobResponse.value[0].Id
+        WriteLog "✅ Job started successfully! Job ID: $jobId"
         
-        # --- 5. Wait for job completion if requested ---
         if ($wait -eq "true") {
-            WriteLog "⏳ Waiting for job completion (timeout: $timeout seconds)..."
+            WriteLog "⏳ Waiting for job completion..."
             $timeoutSeconds = [int]$timeout
             $startTime = Get-Date
-            $allJobsCompleted = $false
             
             do {
                 Start-Sleep -Seconds 10
                 $elapsedSeconds = ((Get-Date) - $startTime).TotalSeconds
                 
-                WriteLog "Checking job status... (elapsed: $([math]::Round($elapsedSeconds))s)"
-                
-                $allCompleted = $true
-                $jobStatuses = @()
-                
-                foreach ($jobId in $jobIds) {
-                    try {
-                        $jobStatusUri = "$orchestratorApiBase/odata/Jobs($jobId)"
-                        $jobStatus = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
+                try {
+                    $jobStatusUri = "$orchestratorApiBase/odata/Jobs($jobId)"
+                    $jobStatus = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
+                    
+                    $status = $jobStatus.State
+                    WriteLog "Job status: $status (elapsed: $([math]::Round($elapsedSeconds))s)"
+                    
+                    if ($status -in @("Successful", "Failed", "Stopped", "Faulted")) {
+                        WriteLog "✅ Job completed with status: $status"
                         
-                        $status = $jobStatus.State
-                        $jobStatuses += "Job $jobId : $status"
-                        
-                        if ($status -notin @("Successful", "Failed", "Stopped", "Faulted")) {
-                            $allCompleted = $false
+                        if ($fail_when_job_fails -eq "true" -and $status -in @("Failed", "Faulted")) {
+                            WriteLog "❌ Job failed with status: $status" -err
+                            exit 1
                         }
+                        break
                     }
-                    catch {
-                        WriteLog "❌ Error checking job $jobId status: $($_.Exception.Message)" -err
-                        $allCompleted = $false
+                    
+                    if ($elapsedSeconds -ge $timeoutSeconds) {
+                        WriteLog "⏰ Timeout reached ($timeout seconds)" -err
+                        exit 1
                     }
-                }
-                
-                WriteLog "Current status: $($jobStatuses -join ', ')"
-                
-                if ($allCompleted) {
-                    $allJobsCompleted = $true
-                    WriteLog "✅ All jobs completed"
-                } elseif ($elapsedSeconds -ge $timeoutSeconds) {
-                    WriteLog "⏰ Timeout reached ($timeout seconds)" -err
-                    break
-                }
-                
-            } while (-not $allJobsCompleted)
-            
-            # Check final job results
-            if ($fail_when_job_fails -eq "true") {
-                $hasFailedJobs = $false
-                foreach ($jobId in $jobIds) {
-                    try {
-                        $jobStatusUri = "$orchestratorApiBase/odata/Jobs($jobId)"
-                        $jobStatus = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
-                        
-                        if ($jobStatus.State -in @("Failed", "Faulted")) {
-                            WriteLog "❌ Job $jobId failed with state: $($jobStatus.State)" -err
-                            $hasFailedJobs = $true
-                        } else {
-                            WriteLog "✅ Job $jobId completed with state: $($jobStatus.State)"
-                        }
-                    }
-                    catch {
-                        WriteLog "❌ Error getting final status for job $jobId : $($_.Exception.Message)" -err
-                        $hasFailedJobs = $true
-                    }
-                }
-                
-                if ($hasFailedJobs) {
-                    WriteLog "❌ One or more jobs failed. Exiting with error." -err
+                    
+                } catch {
+                    WriteLog "❌ Error checking job status: $($_.Exception.Message)" -err
                     exit 1
                 }
-            }
+                
+            } while ($true)
         }
         
         WriteLog "🎉 Job execution completed successfully!"
         exit 0
-        
     } else {
-        WriteLog "❌ No jobs were started. Response: $($startJobResponse | ConvertTo-Json)" -err
+        WriteLog "❌ No jobs were started" -err
         exit 1
     }
-}
-catch {
+    
+} catch {
     WriteLog "❌ Error starting job: $($_.Exception.Message)" -err
     
-    if ($_.Exception.Response) {
-        try {
-            $errorResponseStream = $_.Exception.Response.GetResponseStream()
-            $reader = New-Object System.IO.StreamReader($errorResponseStream)
-            $responseBody = $reader.ReadToEnd()
-            WriteLog "Full error response: $responseBody" -err
-        } catch {
-            WriteLog "Could not read error response: $($_.Exception.Message)" -err
-        }
+    if ($_.Exception.Response.StatusCode -eq 403) {
+        WriteLog "🔧 403 Forbidden - Your external app may need additional job execution permissions" -err
     }
     exit 1
 }
