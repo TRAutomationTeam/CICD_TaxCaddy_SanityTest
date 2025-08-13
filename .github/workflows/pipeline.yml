@@ -37,12 +37,10 @@ jobs:
           Write-Host "GITHUB_SHA: $env:GITHUB_SHA"
           Write-Host "GITHUB_REF: $env:GITHUB_REF"
 
-  config:
+  # CLEANER JOB - Runs first to clean up workspace
+  cleaner:
     runs-on: self-hosted
-    outputs:
-      build: ${{ steps.get_build.outputs.build }}
-      run: ${{ steps.get_run.outputs.run }}
-      deploy: ${{ steps.get_deploy.outputs.deploy }}
+    needs: [print-details]
     steps:
       - name: Enhanced workspace cleanup for self-hosted runner
         shell: pwsh
@@ -133,7 +131,16 @@ jobs:
           
           # Always exit with success to not fail the workflow
           exit 0
-      
+
+  # CONFIG JOB - Runs after cleaner to set up configuration
+  config:
+    runs-on: self-hosted
+    needs: [cleaner]
+    outputs:
+      build: ${{ steps.get_build.outputs.build }}
+      run: ${{ steps.get_run.outputs.run }}
+      deploy: ${{ steps.get_deploy.outputs.deploy }}
+    steps:
       - name: Check out repository code
         uses: actions/checkout@v4
         with:
@@ -226,148 +233,9 @@ jobs:
           Remove-Item -Path $envFile -Force -ErrorAction SilentlyContinue
           Set-Content -Path $envFile -Value $envValue
 
-  build-uipath-nuget-package:
-    needs: [config]
-    if: needs.config.outputs.build == 'Yes'
-    runs-on: self-hosted
-    steps: 
-      - name: Check out repository code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          force: true
-          set-safe-directory: true
-          lfs: false
-      
-      - name: Verify repository structure
-        shell: pwsh
-        run: |
-          Write-Host "Verifying repository structure for build job"
-          Write-Host "Workspace: ${{ github.workspace }}"
-          
-          # Check for required files and directories
-          $requiredItems = @(
-            @{Path="Configue-CICD.txt"; Type="File"},
-            @{Path="scripts"; Type="Directory"},
-            @{Path="scripts/UiPathPack.ps1"; Type="File"},
-            @{Path="project.json"; Type="File"}
-          )
-          
-          foreach ($item in $requiredItems) {
-            $fullPath = Join-Path "${{ github.workspace }}" $item.Path
-            if (Test-Path $fullPath) {
-              Write-Host "✓ $($item.Path) ($($item.Type)) found"
-            } else {
-              Write-Host "✗ $($item.Path) ($($item.Type)) NOT found at: $fullPath"
-              if ($item.Type -eq "File") {
-                Write-Host "This is required for the build process"
-                exit 1
-              }
-            }
-          }
-      
-      - name: Load config values from Configue-CICD.txt
-        id: load_config
-        shell: pwsh
-        run: |
-          $configFile = "${{ github.workspace }}\Configue-CICD.txt"
-          if (-not (Test-Path $configFile)) {
-            Write-Host "Config file not found at: $configFile"
-            exit 1
-          }
-          $config = Get-Content $configFile
-          Write-Host "Processing config file with $($config.Count) lines"
-          foreach ($line in $config) {
-            if ($line -match '^[ ]*PROJECT_NAME[ ]*-[ ]*(.+)$') { 
-              $value = $Matches[1].Trim()
-              Write-Host "Found PROJECT_NAME: '$value'"
-              echo "PROJECT_NAME=$value" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*BRANCH[ ]*-[ ]*(.+)$') { 
-              $value = $Matches[1].Trim()
-              Write-Host "Found BRANCH: '$value'"
-              echo "BRANCH=$value" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*UIPATH_CLI_PATH[ ]*-[ ]*(.+)$') { 
-              $value = $Matches[1].Trim()
-              Write-Host "Found UIPATH_CLI_PATH: '$value'"
-              echo "UIPATH_CLI_PATH=$value" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*FOLDER_ORGANIZATION_UNIT[ ]*-[ ]*(.+)$') { 
-              $value = $Matches[1].Trim()
-              Write-Host "Found FOLDER_ORGANIZATION_UNIT: '$value'"
-              echo "FOLDER_ORG_UNIT=$value" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*FOLDER_DEPLOY_UNIT[ ]*-[ ]*(.+)$') { 
-              $value = $Matches[1].Trim()
-              Write-Host "Found FOLDER_DEPLOY_UNIT: '$value'"
-              echo "FOLDER_DEPLOY_UNIT=$value" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*MACHINE[ ]*-[ ]*(.+)$') { 
-              $value = $Matches[1].Trim()
-              Write-Host "Found MACHINE: '$value'"
-              echo "MACHINE=$value" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*ROBOT[ ]*-[ ]*(.+)$') { 
-              $value = $Matches[1].Trim()
-              Write-Host "Found ROBOT: '$value'"
-              echo "ROBOT=$value" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*TIMEOUT_SEC[ ]*-[ ]*(.+)$') { 
-              $value = $Matches[1].Trim()
-              Write-Host "Found TIMEOUT_SEC: '$value'"
-              echo "TIMEOUT_SEC=$value" >> $env:GITHUB_ENV 
-            }
-          }
-      
-      - name: Print loaded config values
-        shell: pwsh
-        run: |
-          Write-Host "Loaded configuration values:"
-          Get-ChildItem Env: | Where-Object { $_.Name -in @('PROJECT_NAME','BRANCH','UIPATH_CLI_PATH','FOLDER_ORG_UNIT','FOLDER_DEPLOY_UNIT','MACHINE','ROBOT','TIMEOUT_SEC') } | ForEach-Object { Write-Host "  $($_.Name)=$($_.Value)" }
-      
-      - name: Build Nuget Package
-        shell: powershell
-        run: |
-          $packScript = "${{ github.workspace }}\scripts\UiPathPack.ps1"
-          $projectFile = "${{ github.workspace }}\project.json"
-          $packageDir = "${{ github.workspace }}\package"
-          
-          Write-Host "Build parameters:"
-          Write-Host "  Pack script: $packScript"
-          Write-Host "  Project file: $projectFile"
-          Write-Host "  Package directory: $packageDir"
-          Write-Host "  CLI path: ${{ env.UIPATH_CLI_PATH }}"
-          
-          if (-not (Test-Path $packScript)) {
-            Write-Host "UiPathPack.ps1 not found at: $packScript"
-            exit 1
-          }
-          
-          if (-not (Test-Path $projectFile)) {
-            Write-Host "project.json not found at: $projectFile"
-            exit 1
-          }
-          
-          # Create package directory if it doesn't exist
-          if (-not (Test-Path $packageDir)) {
-            New-Item -Path $packageDir -ItemType Directory -Force
-            Write-Host "Created package directory: $packageDir"
-          }
-          
-          & $packScript $projectFile -destination_folder $packageDir -autoVersion -uipathCliFilePath "${{ env.UIPATH_CLI_PATH }}"
-      
-      - name: Upload UiPath Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Artifacts
-          path: |
-           package/*.*
-           scripts/*.ps1
-                    
+  # RUN JOB - Only runs if RUN=Yes in config and after cleaner and config are complete
   run-uipath-nuget-package:
-      needs: [config]
+      needs: [cleaner, config]
       if: needs.config.outputs.run == 'Yes'
       runs-on: self-hosted
       steps:
@@ -505,62 +373,3 @@ jobs:
               -robots "${{ env.ROBOT }}" `
               -uipathCliFilePath "${{ env.UIPATH_CLI_PATH }}" `
               -timeout "${{ env.TIMEOUT_SEC }}"
-
-  publish-uipath-nuget-package:
-    needs: [run-uipath-nuget-package, config]
-    if: needs.config.outputs.deploy == 'Yes'
-    runs-on: self-hosted
-    steps: 
-      - name: Check out repository code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          force: true
-          set-safe-directory: true
-          lfs: false
-      
-      - name: Download UiPath Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: Artifacts
-      
-      - name: Load config values from Configue-CICD.txt
-        id: load_config
-        shell: pwsh
-        run: |
-          $configFile = "${{ github.workspace }}\Configue-CICD.txt"
-          if (-not (Test-Path $configFile)) {
-            Write-Host "Config file not found at: $configFile"
-            exit 1
-          }
-          $config = Get-Content $configFile
-          foreach ($line in $config) {
-            if ($line -match '^[ ]*UIPATH_CLI_PATH[ ]*-[ ]*(.+)$') { echo "UIPATH_CLI_PATH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-            if ($line -match '^[ ]*FOLDER_ORGANIZATION_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_ORG_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-            if ($line -match '^[ ]*FOLDER_DEPLOY_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_DEPLOY_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
-          }
-      
-      - name: Publish Nuget Package to DEV
-        shell: powershell
-        run: |
-          $deployScript = "${{ github.workspace }}\scripts\UiPathDeploy.ps1"
-          if (-not (Test-Path $deployScript)) {
-            Write-Host "UiPathDeploy.ps1 not found at: $deployScript"
-            exit 1
-          }
-          & $deployScript "${{ github.workspace }}\package" "${{env.ORCH_URL}}" "${{env.ORCH_TENANT}}" -UserKey "${{env.ORCH_USER_KEY}}" -account_name "${{env.ORCH_ACC_NAME}}" -folder_organization_unit "${{ env.FOLDER_DEPLOY_UNIT }}" -uipathCliFilePath "${{ env.UIPATH_CLI_PATH }}"
-
-  # Post-job cleanup that runs regardless of job success/failure
-  cleanup:
-    runs-on: self-hosted
-    needs: [print-details, config, build-uipath-nuget-package, run-uipath-nuget-package, publish-uipath-nuget-package]
-    if: always()
-    steps:
-      - name: Final workspace cleanup
-        shell: pwsh
-        run: |
-          Write-Host "Final workspace cleanup"
-          # Use the same comprehensive cleanup function as before but don't fail the workflow
-          # This runs after all other jobs complete
-        continue-on-error: true
