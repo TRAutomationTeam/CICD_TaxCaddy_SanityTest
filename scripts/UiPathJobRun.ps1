@@ -103,17 +103,27 @@ Function Get-OrchestratorAccessToken {
     $identityUrl = "$($identityBaseUrl)/identity_/connect/token" 
     WriteLog "Identity URL for token: $identityUrl"
 
-    $body = @{
+    # >>>>>>>>>>>>>>>>>>>> CRITICAL CHANGE STARTS HERE <<<<<<<<<<<<<<<<<<<<
+    # Define parameters as a hashtable. Invoke-RestMethod will convert this to x-www-form-urlencoded
+    # when ContentType is set correctly.
+    $bodyParams = @{
         "grant_type"    = "client_credentials";
         "client_id"     = $applicationId;
         "client_secret" = $applicationSecret;
         "scope"         = $applicationScope;
-    } | ConvertTo-Json
-    WriteLog "Token request body (masked secret): $(($body | ConvertFrom-Json | Select-Object -ExcludeProperty client_secret) | ConvertTo-Json -Depth 1)"
+    }
+    
+    # For logging purposes, create a masked string that looks like form-urlencoded
+    # Note: ConvertTo-Json here is ONLY for logging. The actual request uses $bodyParams directly.
+    $maskedBodyForLog = "grant_type=client_credentials&client_id=$applicationId&client_secret=********&scope=$applicationScope"
+    WriteLog "Token request body (masked): $maskedBodyForLog"
 
     try {
         WriteLog "Invoking Invoke-RestMethod for access token..."
-        $response = Invoke-RestMethod -Uri $identityUrl -Method Post -ContentType "application/json" -Body $body -ErrorAction Stop
+        # Pass the hashtable directly as Body, and set ContentType to application/x-www-form-urlencoded
+        $response = Invoke-RestMethod -Uri $identityUrl -Method Post -ContentType "application/x-www-form-urlencoded" -Body $bodyParams -ErrorAction Stop 
+        # >>>>>>>>>>>>>>>>>>>> CRITICAL CHANGE ENDS HERE <<<<<<<<<<<<<<<<<<<<
+        
         WriteLog "Invoke-RestMethod for access token completed."
         if ($response.access_token) {
             WriteLog "Successfully retrieved access token."
@@ -127,11 +137,16 @@ Function Get-OrchestratorAccessToken {
         WriteLog "Error getting access token: $($_.Exception.Message)" -err
         WriteLog "Check identity URL: $identityUrl and external app credentials." -err
         # Log the full error response if available from $_.Exception.Response
+        # $_.Exception.Response is an System.Net.WebResponse, you need to read its content.
         if ($_.Exception.Response) {
-            $errorResponse = $_.Exception.Response.GetResponseStream()
-            $reader = New-Object System.IO.StreamReader($errorResponse)
-            $responseBody = $reader.ReadToEnd()
-            WriteLog "Full error response body: $responseBody" -err
+            try {
+                $errorResponseStream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($errorResponseStream)
+                $responseBody = $reader.ReadToEnd()
+                WriteLog "Full error response body: $responseBody" -err
+            } catch {
+                WriteLog "Could not read full error response body: $($_.Exception.Message)" -err
+            }
         }
         exit 1
     }
@@ -157,7 +172,6 @@ WriteLog "Initial headers set: $(ConvertTo-Json $headers)"
 
 Function Resolve-OrchestratorId {
     Param (
-        # Removed $orchestratorUrl from here as it's not directly used to construct the URI inside this function.
         [hashtable]$headers,
         [string]$endpoint, # e.g., "Folders", "Processes", "Robots", "Machines"
         [string]$nameToResolve,
@@ -185,10 +199,14 @@ Function Resolve-OrchestratorId {
     catch {
         WriteLog "Error resolving $endpoint '$nameToResolve': $($_.Exception.Message)" -err
         if ($_.Exception.Response) {
-            $errorResponse = $_.Exception.Response.GetResponseStream()
-            $reader = New-Object System.IO.StreamReader($errorResponse)
-            $responseBody = $reader.ReadToEnd()
-            WriteLog "Full error response body from ID resolution: $responseBody" -err
+            try {
+                $errorResponseStream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($errorResponseStream)
+                $responseBody = $reader.ReadToEnd()
+                WriteLog "Full error response body from ID resolution: $responseBody" -err
+            } catch {
+                WriteLog "Could not read full error response body: $($_.Exception.Message)" -err
+            }
         }
         exit 1
     }
@@ -303,10 +321,14 @@ try {
                 } catch {
                     WriteLog "Error during job status polling: $($_.Exception.Message)" -err
                     if ($_.Exception.Response) {
-                        $errorResponse = $_.Exception.Response.GetResponseStream()
-                        $reader = New-Object System.IO.StreamReader($errorResponse)
-                        $responseBody = $reader.ReadToEnd()
-                        WriteLog "Full error response body from job status polling: $responseBody" -err
+                        try {
+                            $errorResponseStream = $_.Exception.Response.GetResponseStream()
+                            $reader = New-Object System.IO.StreamReader($errorResponseStream)
+                            $responseBody = $reader.ReadToEnd()
+                            WriteLog "Full error response body from job status polling: $responseBody" -err
+                        } catch {
+                            WriteLog "Could not read full error response body: $($_.Exception.Message)" -err
+                        }
                     }
                     WriteLog "Exiting polling loop due to error."
                     $jobStatus = "ErrorPolling" # Set to a non-terminal status to exit loop
@@ -352,10 +374,14 @@ try {
 catch {
     WriteLog "Error starting job: $($_.Exception.Message)" -err
     if ($_.Exception.Response) {
-        $errorResponse = $_.Exception.Response.GetResponseStream()
-        $reader = New-Object System.IO.StreamReader($errorResponse)
-        $responseBody = $reader.ReadToEnd()
-        WriteLog "Full error response body from StartJobs: $responseBody" -err
+        try {
+            $errorResponseStream = $_.Exception.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($errorResponseStream)
+            $responseBody = $reader.ReadToEnd()
+            WriteLog "Full error response body from StartJobs: $responseBody" -err
+        } catch {
+            WriteLog "Could not read full error response body: $($_.Exception.Message)" -err
+        }
     }
     exit 1
 }
