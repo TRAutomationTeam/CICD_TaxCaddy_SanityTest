@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS 
     Run UiPath Orchestrator Job via API with External Application authentication.
-    UPDATED: Uses ModernJobsCount strategy - no robot resolution needed
+    UPDATED: Fixed for Modern Folders with correct strategy
 #>
 Param (
     [Parameter(Mandatory=$true)]
@@ -120,102 +120,139 @@ try {
     exit 1
 }
 
-# --- 3. Use Process Name Directly (Skip Process Resolution) ---
+# --- 3. Use Process Name Directly ---
 WriteLog "⚙️ Using process name directly as ReleaseKey: $processName"
 $processKey = $processName
 
-# --- 4. Start Job Using ModernJobsCount Strategy (No Robot Resolution Needed) ---
-WriteLog "🚀 Starting job with ModernJobsCount strategy (automatic robot selection)..."
+# --- 4. Start Job Using Correct Strategy for Modern Folders ---
+WriteLog "🚀 Starting job with JobsCount strategy for modern folders..."
 
-$startJobBody = @{
-    "startInfo" = @{
-        "ReleaseKey" = $processKey
-        "Strategy" = "ModernJobsCount"
-        "JobsCount" = [int]$jobscount
-        "JobPriority" = $priority
-        "RuntimeType" = "Unattended"
-        "InputArguments" = "{}"
-    }
-} | ConvertTo-Json -Depth 10
-
-WriteLog "Job request body:"
-WriteLog $startJobBody
-
-try {
-    $startJobUri = "$orchestratorApiBase/odata/Jobs/UiPath.Server.Configuration.OData.StartJobs"
-    WriteLog "Job start URI: $startJobUri"
-    
-    $jobResponse = Invoke-RestMethod -Uri $startJobUri -Method Post -Headers $headers -Body $startJobBody -ErrorAction Stop
-    
-    if ($jobResponse.value -and $jobResponse.value.Count -gt 0) {
-        $jobId = $jobResponse.value[0].Id
-        WriteLog "✅ Job started successfully! Job ID: $jobId"
-        
-        if ($wait -eq "true") {
-            WriteLog "⏳ Waiting for job completion..."
-            $timeoutSeconds = [int]$timeout
-            $startTime = Get-Date
-            
-            do {
-                Start-Sleep -Seconds 10
-                $elapsedSeconds = ((Get-Date) - $startTime).TotalSeconds
-                
-                try {
-                    $jobStatusUri = "$orchestratorApiBase/odata/Jobs($jobId)"
-                    $jobStatus = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
-                    
-                    $status = $jobStatus.State
-                    WriteLog "Job status: $status (elapsed: $([math]::Round($elapsedSeconds))s)"
-                    
-                    if ($status -in @("Successful", "Failed", "Stopped", "Faulted")) {
-                        WriteLog "✅ Job completed with status: $status"
-                        
-                        if ($fail_when_job_fails -eq "true" -and $status -in @("Failed", "Faulted")) {
-                            WriteLog "❌ Job failed with status: $status" -err
-                            exit 1
-                        }
-                        break
-                    }
-                    
-                    if ($elapsedSeconds -ge $timeoutSeconds) {
-                        WriteLog "⏰ Timeout reached ($timeout seconds)" -err
-                        exit 1
-                    }
-                    
-                } catch {
-                    WriteLog "❌ Error checking job status: $($_.Exception.Message)" -err
-                    exit 1
-                }
-                
-            } while ($true)
+# Try multiple strategies that work with modern folders
+$strategies = @(
+    @{
+        Name = "JobsCount with no specific robots"
+        Body = @{
+            "startInfo" = @{
+                "ReleaseKey" = $processKey
+                "JobsCount" = [int]$jobscount
+                "InputArguments" = "{}"
+            }
         }
-        
-        WriteLog "🎉 Job execution completed successfully!"
-        exit 0
-    } else {
-        WriteLog "❌ No jobs were started" -err
-        exit 1
-    }
-    
-} catch {
-    WriteLog "❌ Error starting job: $($_.Exception.Message)" -err
-    
-    if ($_.Exception.Response.StatusCode -eq 403) {
-        WriteLog "🔧 403 Forbidden - Your external app may need additional job execution permissions" -err
-        WriteLog "🔧 Ask admin to assign your external app to '$folder_organization_unit' folder with appropriate roles" -err
-    }
-    
-    # Log detailed error response if available
-    if ($_.Exception.Response) {
-        try {
-            $errorStream = $_.Exception.Response.GetResponseStream()
-            $reader = New-Object System.IO.StreamReader($errorStream)
-            $errorBody = $reader.ReadToEnd()
-            WriteLog "Error response body: $errorBody" -err
-        } catch {
-            WriteLog "Could not read error response body" -err
+    },
+    @{
+        Name = "Specific strategy (fallback)"
+        Body = @{
+            "startInfo" = @{
+                "ReleaseKey" = $processKey
+                "Strategy" = "Specific"
+                "RobotIds" = @()
+                "JobsCount" = [int]$jobscount
+                "InputArguments" = "{}"
+            }
+        }
+    },
+    @{
+        Name = "ModernJobsCount with empty arrays"
+        Body = @{
+            "startInfo" = @{
+                "ReleaseKey" = $processKey
+                "Strategy" = "ModernJobsCount"
+                "JobsCount" = [int]$jobscount
+                "InputArguments" = "{}"
+                "MachineRobots" = @()
+            }
         }
     }
-    
+)
+
+$jobStarted = $false
+$jobId = $null
+
+foreach ($strategy in $strategies) {
+    try {
+        WriteLog "Trying strategy: $($strategy.Name)"
+        
+        $startJobBody = $strategy.Body | ConvertTo-Json -Depth 10
+        WriteLog "Job request body:"
+        WriteLog $startJobBody
+        
+        $startJobUri = "$orchestratorApiBase/odata/Jobs/UiPath.Server.Configuration.OData.StartJobs"
+        WriteLog "Job start URI: $startJobUri"
+        
+        $jobResponse = Invoke-RestMethod -Uri $startJobUri -Method Post -Headers $headers -Body $startJobBody -ErrorAction Stop
+        
+        if ($jobResponse.value -and $jobResponse.value.Count -gt 0) {
+            $jobId = $jobResponse.value[0].Id
+            WriteLog "✅ Job started successfully with $($strategy.Name)! Job ID: $jobId"
+            $jobStarted = $true
+            break
+        }
+    }
+    catch {
+        WriteLog "❌ Strategy '$($strategy.Name)' failed: $($_.Exception.Message)"
+        
+        # Log detailed error response if available
+        if ($_.Exception.Response) {
+            try {
+                $errorStream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($errorStream)
+                $errorBody = $reader.ReadToEnd()
+                WriteLog "Error response body: $errorBody"
+            } catch {
+                WriteLog "Could not read error response body"
+            }
+        }
+    }
+}
+
+if (-not $jobStarted) {
+    WriteLog "❌ All job start strategies failed" -err
+    WriteLog "🔧 SOLUTIONS:" -err
+    WriteLog "   1. Verify the process '$processName' is published to the '$folder_organization_unit' folder" -err
+    WriteLog "   2. Check if there are available robots in the folder" -err
+    WriteLog "   3. Ensure your external app has job execution permissions" -err
     exit 1
 }
+
+# --- 5. Monitor Job Completion ---
+if ($wait -eq "true" -and $jobId) {
+    WriteLog "⏳ Waiting for job completion..."
+    $timeoutSeconds = [int]$timeout
+    $startTime = Get-Date
+    
+    do {
+        Start-Sleep -Seconds 10
+        $elapsedSeconds = ((Get-Date) - $startTime).TotalSeconds
+        
+        try {
+            $jobStatusUri = "$orchestratorApiBase/odata/Jobs($jobId)"
+            $jobStatus = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
+            
+            $status = $jobStatus.State
+            WriteLog "Job status: $status (elapsed: $([math]::Round($elapsedSeconds))s)"
+            
+            if ($status -in @("Successful", "Failed", "Stopped", "Faulted")) {
+                WriteLog "✅ Job completed with status: $status"
+                
+                if ($fail_when_job_fails -eq "true" -and $status -in @("Failed", "Faulted")) {
+                    WriteLog "❌ Job failed with status: $status" -err
+                    exit 1
+                }
+                break
+            }
+            
+            if ($elapsedSeconds -ge $timeoutSeconds) {
+                WriteLog "⏰ Timeout reached ($timeout seconds)" -err
+                exit 1
+            }
+            
+        } catch {
+            WriteLog "❌ Error checking job status: $($_.Exception.Message)" -err
+            exit 1
+        }
+        
+    } while ($true)
+}
+
+WriteLog "🎉 Job execution completed successfully!"
+exit 0
