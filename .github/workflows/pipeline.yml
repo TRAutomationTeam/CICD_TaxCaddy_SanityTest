@@ -67,6 +67,7 @@ jobs:
       run: ${{ steps.get_run.outputs.run }}
       environment: ${{ steps.get_environment.outputs.environment }}
       project_name: ${{ steps.get_project_name.outputs.project_name }}
+      robot: ${{ steps.get_robot.outputs.robot }}
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -146,6 +147,16 @@ jobs:
           Write-Host "PROJECT_NAME value: '$projectName'"
           echo "project_name=$projectName" >> $env:GITHUB_OUTPUT
 
+      - name: Get ROBOT value from Configure-CICD.txt
+        id: get_robot
+        shell: pwsh
+        run: |
+          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
+          $robot = (Get-Content $configFile | Where-Object { $_ -match '^[ ]*ROBOT[ ]*-[ ]*(.+)$' }) -replace '^[ ]*ROBOT[ ]*-[ ]*',''
+          $robot = $robot.Trim()
+          Write-Host "ROBOT value: '$robot'"
+          echo "robot=$robot" >> $env:GITHUB_OUTPUT
+
   debug:
     runs-on: self-hosted
     needs: [config]
@@ -160,6 +171,7 @@ jobs:
           Write-Host "config.outputs.build: '${{ needs.config.outputs.build }}'"
           Write-Host "config.outputs.environment: '${{ needs.config.outputs.environment }}'"
           Write-Host "config.outputs.project_name: '${{ needs.config.outputs.project_name }}'"
+          Write-Host "config.outputs.robot: '${{ needs.config.outputs.robot }}'"
           Write-Host "===================="
           
           Write-Host "=== CONDITION EVALUATION ==="
@@ -189,6 +201,7 @@ jobs:
         run: |
           Write-Host "Starting UiPath job run with External Application authentication"
           Write-Host "PROJECT_NAME from config: ${{ needs.config.outputs.project_name }}"
+          Write-Host "ROBOT from config: ${{ needs.config.outputs.robot }}"
           Write-Host "=== DEBUG: External Application Authentication Values ==="
           Write-Host "ORCH_URL: $env:ORCH_URL"
           Write-Host "ORCH_TENANT: $env:ORCH_TENANT"
@@ -212,7 +225,7 @@ jobs:
           Write-Host "  Account Name: $env:ORCH_ACC_NAME"
           Write-Host "  Folder: Automation"
           Write-Host "  Machine: e2-dev-upth01"
-          Write-Host "  Robot: minal-unattended"
+          Write-Host "  Robot: ${{ needs.config.outputs.robot }}"
           Write-Host "  Timeout: 15000"
           
           $scriptPath = "${{ github.workspace }}\scripts\UiPathJobRun.ps1"
@@ -238,7 +251,7 @@ jobs:
               -applicationSecret "$env:ORCH_APP_SECRET" `
               -applicationScope "$env:ORCH_APP_SCOPE" `
               -folder_organization_unit "Automation" `
-              -robots "minal-unattended" `
+              -robots "${{ needs.config.outputs.robot }}" `
               -machine "e2-dev-upth01" `
               -timeout "15000" `
               -wait "true" `
