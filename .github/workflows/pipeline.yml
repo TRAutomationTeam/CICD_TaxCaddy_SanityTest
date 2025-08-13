@@ -358,7 +358,7 @@ jobs:
             Write-Host "  CLI Path: ${{ env.UIPATH_CLI_PATH }}"
             Write-Host "  Timeout: ${{ env.TIMEOUT_SEC }}"
             
-            # Use environment variables directly to avoid parsing issues with special characters
+            # FIXED: Use ONLY external app authentication - REMOVED -accountName parameter
             & $jobRunScript `
               -processName "${{ env.PROJECT_NAME }}" `
               -uriOrch "${{ env.ORCH_URL }}" `
@@ -367,7 +367,6 @@ jobs:
               -applicationId "${{ env.ORCH_APP_ID }}" `
               -applicationSecret $env:UIPATH_APP_SECRET `
               -applicationScope $env:UIPATH_APP_SCOPE `
-              -accountName "${{ env.ORCH_ACC_NAME }}" `
               -folder_organization_unit "${{ env.FOLDER_ORG_UNIT }}" `
               -machine "${{ env.MACHINE }}" `
               -robots "${{ env.ROBOT }}" `
