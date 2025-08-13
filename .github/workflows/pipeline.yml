@@ -58,4 +58,171 @@ jobs:
             if (Test-Path $Path) {
               # Method 1: Try PowerShell Remove-Item
               try {
-                Write-Host "
+                Write-Host "Attempting PowerShell cleanup..."
+                Get-ChildItem -Path $Path -Recurse -Force | Remove-Item -Force -Recurse -ErrorAction Stop
+                Remove-Item -Path $Path -Force -Recurse -ErrorAction Stop
+                $cleanupSuccess = $true
+                Write-Host "✓ PowerShell cleanup successful"
+              }
+              catch {
+                Write-Host "PowerShell cleanup failed: $($_.Exception.Message)"
+              }
+              
+              # Method 2: Try cmd rmdir if PowerShell failed
+              if (-not $cleanupSuccess -and (Test-Path $Path)) {
+                try {
+                  Write-Host "Attempting cmd rmdir cleanup..."
+                  $result = cmd /c "rmdir /s /q `"$Path`" 2>&1"
+                  if ($LASTEXITCODE -eq 0) {
+                    $cleanupSuccess = $true
+                    Write-Host "✓ cmd rmdir cleanup successful"
+                  } else {
+                    Write-Host "cmd rmdir failed with exit code: $LASTEXITCODE"
+                    Write-Host "Output: $result"
+                  }
+                }
+                catch {
+                  Write-Host "cmd rmdir cleanup failed: $($_.Exception.Message)"
+                }
+              }
+              
+              # Method 3: Try robocopy method for stubborn files
+              if (-not $cleanupSuccess -and (Test-Path $Path)) {
+                try {
+                  Write-Host "Attempting robocopy cleanup method..."
+                  $emptyDir = "$env:TEMP\empty_$(Get-Random)"
+                  New-Item -ItemType Directory -Path $emptyDir -Force | Out-Null
+                  $result = robocopy $emptyDir $Path /MIR /R:0 /W:0 2>&1
+                  Remove-Item -Path $emptyDir -Force -ErrorAction SilentlyContinue
+                  Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue
+                  if (-not (Test-Path $Path)) {
+                    $cleanupSuccess = $true
+                    Write-Host "✓ robocopy cleanup successful"
+                  }
+                }
+                catch {
+                  Write-Host "robocopy cleanup failed: $($_.Exception.Message)"
+                }
+              }
+            } else {
+              Write-Host "✓ Workspace directory doesn't exist - nothing to clean"
+              $cleanupSuccess = $true
+            }
+            
+            return $cleanupSuccess
+          }
+          
+          # Attempt cleanup
+          $success = Invoke-WorkspaceCleanup -Path $workspacePath
+          
+          # Ensure directory exists for checkout
+          if (-not (Test-Path $workspacePath)) {
+            New-Item -Path $workspacePath -ItemType Directory -Force | Out-Null
+            Write-Host "✓ Created fresh workspace directory"
+          }
+          
+          # Report final status but don't fail the job
+          if ($success) {
+            Write-Host "✅ Workspace cleanup completed successfully"
+          } else {
+            Write-Host "⚠️ Workspace cleanup had issues, but continuing with workflow"
+            Write-Host "Some files may remain from previous runs"
+          }
+          
+          # Always exit with success to not fail the workflow
+          exit 0
+
+  # CONFIG JOB - Runs after cleaner to set up configuration
+  config:
+    runs-on: self-hosted
+    needs: [cleaner]
+    outputs:
+      build: ${{ steps.get_build.outputs.build }}
+      run: ${{ steps.get_run.outputs.run }}
+      deploy: ${{ steps.get_deploy.outputs.deploy }}
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+          force: true
+          set-safe-directory: true
+          lfs: false
+      
+      - name: Post-checkout verification
+        shell: pwsh
+        run: |
+          Write-Host "Post-checkout verification"
+          Write-Host "Current working directory: $(Get-Location)"
+          Write-Host "Workspace path: ${{ github.workspace }}"
+          
+          Write-Host "`nWorkspace contents after checkout:"
+          Get-ChildItem -Path "${{ github.workspace }}" -Force | ForEach-Object { 
+            Write-Host "  - $($_.Name) ($($_.GetType().Name))"
+            if ($_.PSIsContainer) {
+              Get-ChildItem -Path $_.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object {
+                Write-Host "    - $($_.Name)"
+              }
+            }
+          }
+          
+          Write-Host "`nChecking for required files:"
+          # Check for config file
+          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
+          if (Test-Path $configFile) {
+            Write-Host "✓ Configue-CICD.txt found"
+            Write-Host "Config file contents:"
+            Get-Content $configFile | ForEach-Object { Write-Host "  $_" }
+          } else {
+            Write-Host "✗ Configue-CICD.txt NOT found at: $configFile"
+            Write-Host "Available files in workspace:"
+            Get-ChildItem -Path "${{ github.workspace }}" -Recurse -File | Select-Object FullName | ForEach-Object { Write-Host "  $($_.FullName)" }
+            exit 1
+          }
+          
+          # Check for scripts directory
+          $scriptsDir = "${{ github.workspace }}/scripts"
+          if (Test-Path $scriptsDir) {
+            Write-Host "✓ Scripts directory found"
+            Get-ChildItem $scriptsDir | ForEach-Object { Write-Host "  - $($_.Name)" }
+          } else {
+            Write-Host "⚠️ Scripts directory not found at: $scriptsDir"
+          }
+      
+      - name: Get BUILD value from Configure-CICD.txt
+        id: get_build
+        shell: pwsh
+        run: |
+          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
+          if (-not (Test-Path $configFile)) {
+            Write-Host "Config file not found at: $configFile"
+            exit 1
+          }
+          $build = (Get-Content $configFile | Where-Object { $_ -match '^BUILD[ ]*-[ ]*(.+)$' }) -replace '^BUILD[ ]*-[ ]*',''
+          Write-Host "BUILD value: '$build'"
+          echo "build=$build" >> $env:GITHUB_OUTPUT
+      
+      - name: Get RUN value from Configure-CICD.txt
+        id: get_run
+        shell: pwsh
+        run: |
+          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
+          $run = (Get-Content $configFile | Where-Object { $_ -match '^RUN[ ]*-[ ]*(.+)$' }) -replace '^RUN[ ]*-[ ]*',''
+          Write-Host "RUN value: '$run'"
+          echo "run=$run" >> $env:GITHUB_OUTPUT
+      
+      - name: Get DEPLOY value from Configure-CICD.txt
+        id: get_deploy
+        shell: pwsh
+        run: |
+          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
+          $deploy = (Get-Content $configFile | Where-Object { $_ -match '^DEPLOY[ ]*-[ ]*(.+)$' }) -replace '^DEPLOY[ ]*-[ ]*',''
+          Write-Host "DEPLOY value: '$deploy'"
+          echo "deploy=$deploy" >> $env:GITHUB_OUTPUT
+      
+      - name: Write ENVIRONMENT value to file
+        shell: pwsh
+        run: |
+          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
+          $envValue = (Get-Content $configFile | Where-Object { $_ -match '^[ ]*ENVIRONMENT[ ]*-[ ]*(.+)$' }) -replace '^[ ]*ENVIRONMENT[ ]*-[ ]*',
