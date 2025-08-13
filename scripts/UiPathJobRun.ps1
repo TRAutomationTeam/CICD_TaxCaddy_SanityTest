@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS 
     Run UiPath Orchestrator Job via API with External Application authentication.
-    UPDATED: Fixed for Modern Folders with correct strategy
+    UPDATED: Added process verification and better error handling
 #>
 Param (
     [Parameter(Mandatory=$true)]
@@ -54,7 +54,6 @@ WriteLog "  - Tenant: $tenantlName"
 WriteLog "  - Account: $accountForApp"
 WriteLog "  - Folder: $folder_organization_unit"
 WriteLog "  - Timeout: $timeout"
-WriteLog "Available scopes: $applicationScope"
 
 # Define URLs
 $orchestratorApiBase = "$uriOrch/orchestrator_"
@@ -120,139 +119,138 @@ try {
     exit 1
 }
 
-# --- 3. Use Process Name Directly ---
-WriteLog "⚙️ Using process name directly as ReleaseKey: $processName"
-$processKey = $processName
+# --- 3. CRITICAL: Verify Process/Release Exists ---
+WriteLog "🔍 Verifying process/release exists in folder..."
 
-# --- 4. Start Job Using Correct Strategy for Modern Folders ---
-WriteLog "🚀 Starting job with JobsCount strategy for modern folders..."
-
-# Try multiple strategies that work with modern folders
-$strategies = @(
-    @{
-        Name = "JobsCount with no specific robots"
-        Body = @{
-            "startInfo" = @{
-                "ReleaseKey" = $processKey
-                "JobsCount" = [int]$jobscount
-                "InputArguments" = "{}"
-            }
-        }
-    },
-    @{
-        Name = "Specific strategy (fallback)"
-        Body = @{
-            "startInfo" = @{
-                "ReleaseKey" = $processKey
-                "Strategy" = "Specific"
-                "RobotIds" = @()
-                "JobsCount" = [int]$jobscount
-                "InputArguments" = "{}"
-            }
-        }
-    },
-    @{
-        Name = "ModernJobsCount with empty arrays"
-        Body = @{
-            "startInfo" = @{
-                "ReleaseKey" = $processKey
-                "Strategy" = "ModernJobsCount"
-                "JobsCount" = [int]$jobscount
-                "InputArguments" = "{}"
-                "MachineRobots" = @()
-            }
-        }
-    }
-)
-
-$jobStarted = $false
-$jobId = $null
-
-foreach ($strategy in $strategies) {
-    try {
-        WriteLog "Trying strategy: $($strategy.Name)"
-        
-        $startJobBody = $strategy.Body | ConvertTo-Json -Depth 10
-        WriteLog "Job request body:"
-        WriteLog $startJobBody
-        
-        $startJobUri = "$orchestratorApiBase/odata/Jobs/UiPath.Server.Configuration.OData.StartJobs"
-        WriteLog "Job start URI: $startJobUri"
-        
-        $jobResponse = Invoke-RestMethod -Uri $startJobUri -Method Post -Headers $headers -Body $startJobBody -ErrorAction Stop
-        
-        if ($jobResponse.value -and $jobResponse.value.Count -gt 0) {
-            $jobId = $jobResponse.value[0].Id
-            WriteLog "✅ Job started successfully with $($strategy.Name)! Job ID: $jobId"
-            $jobStarted = $true
-            break
-        }
-    }
-    catch {
-        WriteLog "❌ Strategy '$($strategy.Name)' failed: $($_.Exception.Message)"
-        
-        # Log detailed error response if available
-        if ($_.Exception.Response) {
-            try {
-                $errorStream = $_.Exception.Response.GetResponseStream()
-                $reader = New-Object System.IO.StreamReader($errorStream)
-                $errorBody = $reader.ReadToEnd()
-                WriteLog "Error response body: $errorBody"
-            } catch {
-                WriteLog "Could not read error response body"
-            }
-        }
-    }
-}
-
-if (-not $jobStarted) {
-    WriteLog "❌ All job start strategies failed" -err
-    WriteLog "🔧 SOLUTIONS:" -err
-    WriteLog "   1. Verify the process '$processName' is published to the '$folder_organization_unit' folder" -err
-    WriteLog "   2. Check if there are available robots in the folder" -err
-    WriteLog "   3. Ensure your external app has job execution permissions" -err
-    exit 1
-}
-
-# --- 5. Monitor Job Completion ---
-if ($wait -eq "true" -and $jobId) {
-    WriteLog "⏳ Waiting for job completion..."
-    $timeoutSeconds = [int]$timeout
-    $startTime = Get-Date
+# Try to list available processes/releases for debugging
+try {
+    WriteLog "Attempting to list available releases in folder for debugging..."
+    $releasesUri = "$orchestratorApiBase/odata/Releases"
+    $releasesResponse = Invoke-RestMethod -Uri $releasesUri -Method Get -Headers $headers -ErrorAction SilentlyContinue
     
-    do {
-        Start-Sleep -Seconds 10
-        $elapsedSeconds = ((Get-Date) - $startTime).TotalSeconds
+    if ($releasesResponse.value) {
+        WriteLog "Available releases in this folder:"
+        $releasesResponse.value | ForEach-Object { 
+            WriteLog "  - Name: '$($_.Name)', Key: '$($_.Key)', ProcessKey: '$($_.ProcessKey)'" 
+        }
         
-        try {
-            $jobStatusUri = "$orchestratorApiBase/odata/Jobs($jobId)"
-            $jobStatus = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
-            
-            $status = $jobStatus.State
-            WriteLog "Job status: $status (elapsed: $([math]::Round($elapsedSeconds))s)"
-            
-            if ($status -in @("Successful", "Failed", "Stopped", "Faulted")) {
-                WriteLog "✅ Job completed with status: $status"
-                
-                if ($fail_when_job_fails -eq "true" -and $status -in @("Failed", "Faulted")) {
-                    WriteLog "❌ Job failed with status: $status" -err
-                    exit 1
-                }
-                break
-            }
-            
-            if ($elapsedSeconds -ge $timeoutSeconds) {
-                WriteLog "⏰ Timeout reached ($timeout seconds)" -err
-                exit 1
-            }
-            
-        } catch {
-            WriteLog "❌ Error checking job status: $($_.Exception.Message)" -err
+        # Try to find exact match
+        $matchingRelease = $releasesResponse.value | Where-Object { 
+            $_.ProcessKey -eq $processName -or $_.Name -eq $processName -or $_.Key -eq $processName 
+        }
+        
+        if ($matchingRelease) {
+            $processKey = $matchingRelease.Key
+            WriteLog "✅ Found matching release! Using ReleaseKey: $processKey"
+        } else {
+            WriteLog "❌ No matching release found for '$processName'" -err
+            WriteLog "🔧 SOLUTION: Verify the exact process name in Orchestrator" -err
+            WriteLog "🔧 The process name should match one of the ProcessKey values listed above" -err
             exit 1
         }
-        
-    } while ($true)
+    } else {
+        WriteLog "No releases found in folder (might be permissions issue)"
+        WriteLog "Using process name directly as fallback: $processName"
+        $processKey = $processName
+    }
+} catch {
+    WriteLog "Could not verify releases (using direct process name): $($_.Exception.Message)"
+    $processKey = $processName
 }
 
-WriteLog "🎉 Job execution completed successfully!"
-exit 0
+# --- 4. Start Job with Verified Process Key ---
+WriteLog "🚀 Starting job with verified process key: $processKey"
+
+# Use the most basic strategy that should work
+$startJobBody = @{
+    "startInfo" = @{
+        "ReleaseKey" = $processKey
+        "JobsCount" = [int]$jobscount
+        "InputArguments" = "{}"
+    }
+} | ConvertTo-Json -Depth 10
+
+WriteLog "Job request body:"
+WriteLog $startJobBody
+
+try {
+    $startJobUri = "$orchestratorApiBase/odata/Jobs/UiPath.Server.Configuration.OData.StartJobs"
+    WriteLog "Job start URI: $startJobUri"
+    
+    $jobResponse = Invoke-RestMethod -Uri $startJobUri -Method Post -Headers $headers -Body $startJobBody -ErrorAction Stop
+    
+    if ($jobResponse.value -and $jobResponse.value.Count -gt 0) {
+        $jobId = $jobResponse.value[0].Id
+        WriteLog "✅ Job started successfully! Job ID: $jobId"
+        
+        if ($wait -eq "true") {
+            WriteLog "⏳ Waiting for job completion..."
+            $timeoutSeconds = [int]$timeout
+            $startTime = Get-Date
+            
+            do {
+                Start-Sleep -Seconds 10
+                $elapsedSeconds = ((Get-Date) - $startTime).TotalSeconds
+                
+                try {
+                    $jobStatusUri = "$orchestratorApiBase/odata/Jobs($jobId)"
+                    $jobStatus = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
+                    
+                    $status = $jobStatus.State
+                    WriteLog "Job status: $status (elapsed: $([math]::Round($elapsedSeconds))s)"
+                    
+                    if ($status -in @("Successful", "Failed", "Stopped", "Faulted")) {
+                        WriteLog "✅ Job completed with status: $status"
+                        
+                        if ($fail_when_job_fails -eq "true" -and $status -in @("Failed", "Faulted")) {
+                            WriteLog "❌ Job failed with status: $status" -err
+                            exit 1
+                        }
+                        break
+                    }
+                    
+                    if ($elapsedSeconds -ge $timeoutSeconds) {
+                        WriteLog "⏰ Timeout reached ($timeout seconds)" -err
+                        exit 1
+                    }
+                    
+                } catch {
+                    WriteLog "❌ Error checking job status: $($_.Exception.Message)" -err
+                    exit 1
+                }
+                
+            } while ($true)
+        }
+        
+        WriteLog "🎉 Job execution completed successfully!"
+        exit 0
+    } else {
+        WriteLog "❌ No jobs were started" -err
+        exit 1
+    }
+    
+} catch {
+    WriteLog "❌ Error starting job: $($_.Exception.Message)" -err
+    
+    # Enhanced error logging
+    if ($_.Exception.Response) {
+        $statusCode = $_.Exception.Response.StatusCode
+        WriteLog "HTTP Status Code: $statusCode" -err
+        
+        try {
+            $errorStream = $_.Exception.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($errorStream)
+            $errorBody = $reader.ReadToEnd()
+            WriteLog "Detailed error response: $errorBody" -err
+        } catch {
+            WriteLog "Could not read detailed error response" -err
+        }
+    }
+    
+    WriteLog "🔧 TROUBLESHOOTING STEPS:" -err
+    WriteLog "   1. Verify process '$processName' exists in Orchestrator" -err
+    WriteLog "   2. Check if it's published to the '$folder_organization_unit' folder" -err
+    WriteLog "   3. Ensure your external app has execution permissions" -err
+    WriteLog "   4. Try using the exact ProcessKey from the releases list above" -err
+    exit 1
+}
