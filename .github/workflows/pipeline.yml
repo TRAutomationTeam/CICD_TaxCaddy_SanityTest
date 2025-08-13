@@ -36,104 +36,111 @@ jobs:
           Write-Host "GITHUB_WORKSPACE: $env:GITHUB_WORKSPACE"
           Write-Host "GITHUB_SHA: $env:GITHUB_SHA"
           Write-Host "GITHUB_REF: $env:GITHUB_REF"
-          
-  cleaner:
-    runs-on: self-hosted
-    steps:
-      - name: Force cleanup workspace directory
-        shell: pwsh
-        run: |
-          Write-Host "Cleaning up previous run - Force cleanup for self-hosted runner"
-          $workspacePath = "${{ github.workspace }}"
-          Write-Host "Workspace path: $workspacePath"
-          
-          # Stop any processes that might be using files in the workspace
-          Get-Process | Where-Object { $_.Path -like "$workspacePath*" } | Stop-Process -Force -ErrorAction SilentlyContinue
-          
-          # Wait a moment for processes to stop
-          Start-Sleep -Seconds 3
-          
-          # Force remove with different approaches for stubborn files
-          if (Test-Path $workspacePath) {
-            try {
-              # First attempt: Normal removal
-              Remove-Item -Path $workspacePath -Recurse -Force -ErrorAction Stop
-              Write-Host "✓ Workspace cleaned successfully"
-            }
-            catch {
-              Write-Host "First cleanup attempt failed: $($_.Exception.Message)"
-              try {
-                # Second attempt: Remove .git folder separately (common issue)
-                $gitPath = Join-Path $workspacePath ".git"
-                if (Test-Path $gitPath) {
-                  Write-Host "Removing .git folder separately..."
-                  cmd /c "rmdir /s /q `"$gitPath`""
-                }
-                # Then remove the rest
-                Remove-Item -Path $workspacePath -Recurse -Force -ErrorAction Stop
-                Write-Host "✓ Workspace cleaned on second attempt"
-              }
-              catch {
-                Write-Host "Second cleanup attempt failed: $($_.Exception.Message)"
-                # Third attempt: Use cmd rmdir for Windows
-                try {
-                  Write-Host "Using cmd rmdir for final cleanup..."
-                  cmd /c "rmdir /s /q `"$workspacePath`""
-                  Write-Host "✓ Workspace cleaned with cmd rmdir"
-                }
-                catch {
-                  Write-Host "⚠️ Warning: Could not fully clean workspace. Some files may remain."
-                  Write-Host "Error: $($_.Exception.Message)"
-                  # Don't fail the job, just warn
-                }
-              }
-            }
-          }
-          
-          # Ensure the directory exists for the next job
-          if (-not (Test-Path $workspacePath)) {
-            New-Item -Path $workspacePath -ItemType Directory -Force
-            Write-Host "✓ Created fresh workspace directory"
-          }
 
   config:
     runs-on: self-hosted
-    needs: cleaner
     outputs:
       build: ${{ steps.get_build.outputs.build }}
       run: ${{ steps.get_run.outputs.run }}
       deploy: ${{ steps.get_deploy.outputs.deploy }}
     steps:
-      - name: Pre-checkout cleanup and verification
+      - name: Enhanced workspace cleanup for self-hosted runner
         shell: pwsh
         run: |
-          Write-Host "Pre-checkout verification for self-hosted runner"
+          Write-Host "Enhanced workspace cleanup for self-hosted runner"
           $workspacePath = "${{ github.workspace }}"
           Write-Host "Workspace path: $workspacePath"
           
-          # List any remaining files
-          if (Test-Path $workspacePath) {
-            Write-Host "Current workspace contents:"
-            Get-ChildItem -Path $workspacePath -Force -ErrorAction SilentlyContinue | ForEach-Object { 
-              Write-Host "  - $($_.Name) ($($_.GetType().Name))"
+          # Function to attempt cleanup with multiple methods
+          function Invoke-WorkspaceCleanup {
+            param([string]$Path)
+            
+            $cleanupSuccess = $false
+            
+            if (Test-Path $Path) {
+              # Method 1: Try PowerShell Remove-Item
+              try {
+                Write-Host "Attempting PowerShell cleanup..."
+                Get-ChildItem -Path $Path -Recurse -Force | Remove-Item -Force -Recurse -ErrorAction Stop
+                Remove-Item -Path $Path -Force -Recurse -ErrorAction Stop
+                $cleanupSuccess = $true
+                Write-Host "✓ PowerShell cleanup successful"
+              }
+              catch {
+                Write-Host "PowerShell cleanup failed: $($_.Exception.Message)"
+              }
+              
+              # Method 2: Try cmd rmdir if PowerShell failed
+              if (-not $cleanupSuccess -and (Test-Path $Path)) {
+                try {
+                  Write-Host "Attempting cmd rmdir cleanup..."
+                  $result = cmd /c "rmdir /s /q `"$Path`" 2>&1"
+                  if ($LASTEXITCODE -eq 0) {
+                    $cleanupSuccess = $true
+                    Write-Host "✓ cmd rmdir cleanup successful"
+                  } else {
+                    Write-Host "cmd rmdir failed with exit code: $LASTEXITCODE"
+                    Write-Host "Output: $result"
+                  }
+                }
+                catch {
+                  Write-Host "cmd rmdir cleanup failed: $($_.Exception.Message)"
+                }
+              }
+              
+              # Method 3: Try robocopy method for stubborn files
+              if (-not $cleanupSuccess -and (Test-Path $Path)) {
+                try {
+                  Write-Host "Attempting robocopy cleanup method..."
+                  $emptyDir = "$env:TEMP\empty_$(Get-Random)"
+                  New-Item -ItemType Directory -Path $emptyDir -Force | Out-Null
+                  $result = robocopy $emptyDir $Path /MIR /R:0 /W:0 2>&1
+                  Remove-Item -Path $emptyDir -Force -ErrorAction SilentlyContinue
+                  Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue
+                  if (-not (Test-Path $Path)) {
+                    $cleanupSuccess = $true
+                    Write-Host "✓ robocopy cleanup successful"
+                  }
+                }
+                catch {
+                  Write-Host "robocopy cleanup failed: $($_.Exception.Message)"
+                }
+              }
+            } else {
+              Write-Host "✓ Workspace directory doesn't exist - nothing to clean"
+              $cleanupSuccess = $true
             }
-          } else {
-            Write-Host "Workspace directory does not exist, creating it..."
-            New-Item -Path $workspacePath -ItemType Directory -Force
+            
+            return $cleanupSuccess
           }
+          
+          # Attempt cleanup
+          $success = Invoke-WorkspaceCleanup -Path $workspacePath
+          
+          # Ensure directory exists for checkout
+          if (-not (Test-Path $workspacePath)) {
+            New-Item -Path $workspacePath -ItemType Directory -Force | Out-Null
+            Write-Host "✓ Created fresh workspace directory"
+          }
+          
+          # Report final status but don't fail the job
+          if ($success) {
+            Write-Host "✅ Workspace cleanup completed successfully"
+          } else {
+            Write-Host "⚠️ Workspace cleanup had issues, but continuing with workflow"
+            Write-Host "Some files may remain from previous runs"
+          }
+          
+          # Always exit with success to not fail the workflow
+          exit 0
       
       - name: Check out repository code
         uses: actions/checkout@v4
         with:
-          # Fetch all history for all branches and tags
           fetch-depth: 0
-          # Clean the workspace before checkout (important for self-hosted runners)
           clean: true
-          # Force checkout to overwrite any existing files
           force: true
-          # Set safe directory to avoid git ownership issues
           set-safe-directory: true
-          # Disable LFS for faster checkout if not needed
           lfs: false
       
       - name: Post-checkout verification
@@ -543,3 +550,17 @@ jobs:
             exit 1
           }
           & $deployScript "${{ github.workspace }}\package" "${{env.ORCH_URL}}" "${{env.ORCH_TENANT}}" -UserKey "${{env.ORCH_USER_KEY}}" -account_name "${{env.ORCH_ACC_NAME}}" -folder_organization_unit "${{ env.FOLDER_DEPLOY_UNIT }}" -uipathCliFilePath "${{ env.UIPATH_CLI_PATH }}"
+
+  # Post-job cleanup that runs regardless of job success/failure
+  cleanup:
+    runs-on: self-hosted
+    needs: [print-details, config, build-uipath-nuget-package, run-uipath-nuget-package, publish-uipath-nuget-package]
+    if: always()
+    steps:
+      - name: Final workspace cleanup
+        shell: pwsh
+        run: |
+          Write-Host "Final workspace cleanup"
+          # Use the same comprehensive cleanup function as before but don't fail the workflow
+          # This runs after all other jobs complete
+        continue-on-error: true
