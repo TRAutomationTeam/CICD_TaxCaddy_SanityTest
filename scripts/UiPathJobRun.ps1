@@ -4,8 +4,6 @@
 
 .DESCRIPTION 
     This script triggers an Orchestrator job using direct API calls (OAuth2 External Application authentication).
-
-# ... (Rest of the original Param block for documentation remains largely the same, but the internal usage changes)
 #>
 Param (
     #Required
@@ -69,6 +67,13 @@ if (Test-Path $debugLog) {
 
 WriteLog "Starting UiPath Orchestrator Job via API..."
 
+# Define the base URL for Orchestrator OData API calls
+# This correctly appends /orchestrator_ for Cloud Orchestrator API endpoints
+# This variable needs to be defined AFTER $uriOrch is available (i.e., not in a function or param block)
+$orchestratorApiBase = "$uriOrch/orchestrator_"
+WriteLog "Orchestrator API Base for OData calls: $orchestratorApiBase"
+
+
 # --- 1. Get Access Token from External Application Credentials ---
 Function Get-OrchestratorAccessToken {
     Param (
@@ -76,11 +81,11 @@ Function Get-OrchestratorAccessToken {
         [string]$applicationId,
         [string]$applicationSecret,
         [string]$applicationScope,
-        [string]$orchestratorUrl
+        [string]$identityBaseUrl # Renamed parameter for clarity: this is the base for /identity_
     )
     WriteLog "Attempting to get access token for external application..."
     
-    $identityUrl = "$($orchestratorUrl)/identity_/connect/token" 
+    $identityUrl = "$($identityBaseUrl)/identity_/connect/token" 
     WriteLog "Identity URL for token: $identityUrl"
 
     $body = @{
@@ -117,7 +122,9 @@ Function Get-OrchestratorAccessToken {
     }
 }
 
-$accessToken = Get-OrchestratorAccessToken -accountName $accountForApp -applicationId $applicationId -applicationSecret $applicationSecret -applicationScope $applicationScope -orchestratorUrl $uriOrch
+# IMPORTANT: Pass $uriOrch (which now holds 'https://cloud.uipath.com/surepymsxjta/DefaultTenant')
+# to the identityBaseUrl parameter of the function.
+$accessToken = Get-OrchestratorAccessToken -accountName $accountForApp -applicationId $applicationId -applicationSecret $applicationSecret -applicationScope $applicationScope -identityBaseUrl $uriOrch
 
 $headers = @{
     "Authorization" = "Bearer $accessToken"
@@ -131,7 +138,8 @@ WriteLog "Initial headers set: $(ConvertTo-Json $headers)"
 
 Function Resolve-OrchestratorId {
     Param (
-        [string]$orchestratorUrl,
+        [string]$orchestratorUrl, # This parameter is no longer directly used to construct the URI inside this function.
+                                  # It's passed from the main script ($uriOrch) but we now use $orchestratorApiBase.
         [hashtable]$headers,
         [string]$endpoint, # e.g., "Folders", "Processes", "Robots", "Machines"
         [string]$nameToResolve,
@@ -139,7 +147,8 @@ Function Resolve-OrchestratorId {
         [string]$idProperty # e.g., "Id", "Key"
     )
     WriteLog "Resolving $endpoint '$nameToResolve'..."
-    $uri = "$orchestratorUrl/odata/$endpoint`$filter=($filterProperty eq '$nameToResolve')"
+    # IMPORTANT CHANGE HERE: Use $orchestratorApiBase for all OData calls
+    $uri = "$orchestratorApiBase/odata/$endpoint`$filter=($filterProperty eq '$nameToResolve')"
     WriteLog "Resolution URI: $uri"
     WriteLog "Resolution Headers: $(ConvertTo-Json $headers)"
 
@@ -227,7 +236,8 @@ if ($input_path -ne "") {
     }
 }
 
-$startJobUri = "$uriOrch/odata/Jobs/UiPath.OData.V2.StartJobs"
+# Use the newly defined $orchestratorApiBase for the StartJobs URI
+$startJobUri = "$orchestratorApiBase/odata/Jobs/UiPath.OData.V2.StartJobs"
 
 # For modern folders, Orchestrator expects the X-UIPATH-OrganizationUnitId header for many API calls.
 # Add it to the headers.
@@ -265,7 +275,8 @@ try {
                 Start-Sleep -Seconds $pollingInterval
                 
                 # Get job status
-                $jobStatusUri = "$uriOrch/odata/Jobs(`$filter=Id eq $startedJobId)"
+                # Use the newly defined $orchestratorApiBase for the job status URI
+                $jobStatusUri = "$orchestratorApiBase/odata/Jobs(`$filter=Id eq $startedJobId)"
                 WriteLog "Polling job status URI: $jobStatusUri"
                 WriteLog "Polling job status Headers: $(ConvertTo-Json $headers)"
                 try {
