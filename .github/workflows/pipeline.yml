@@ -139,7 +139,6 @@ jobs:
     outputs:
       build: ${{ steps.get_build.outputs.build }}
       run: ${{ steps.get_run.outputs.run }}
-      deploy: ${{ steps.get_deploy.outputs.deploy }}
       environment: ${{ steps.get_environment.outputs.environment }}
       project_name: ${{ steps.get_project_name.outputs.project_name }}
     steps:
@@ -214,15 +213,6 @@ jobs:
           Write-Host "RUN value: '$run'"
           echo "run=$run" >> $env:GITHUB_OUTPUT
       
-      - name: Get DEPLOY value from Configure-CICD.txt
-        id: get_deploy
-        shell: pwsh
-        run: |
-          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
-          $deploy = (Get-Content $configFile | Where-Object { $_ -match '^DEPLOY[ ]*-[ ]*(.+)$' }) -replace '^DEPLOY[ ]*-[ ]*',''
-          Write-Host "DEPLOY value: '$deploy'"
-          echo "deploy=$deploy" >> $env:GITHUB_OUTPUT
-      
       - name: Get ENVIRONMENT value from Configure-CICD.txt
         id: get_environment
         shell: pwsh
@@ -267,7 +257,7 @@ jobs:
           # For example, using UiPath CLI to build the project
           Write-Host "✅ Build process completed successfully"
 
-  # RUN JOB - The missing job that executes UiPath workflows
+  # RUN JOB - Executes UiPath workflows
   run:
     runs-on: self-hosted
     needs: [config, build]
@@ -366,36 +356,10 @@ jobs:
             exit 1
           }
 
-  # DEPLOY JOB - Conditional deploy job
-  deploy:
-    runs-on: self-hosted
-    needs: [config, build, run]
-    if: always() && needs.config.outputs.deploy == 'true' && needs.run.result == 'success'
-    steps:
-      - name: Check out repository code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          force: true
-          set-safe-directory: true
-          lfs: false
-      
-      - name: Deploy UiPath Project
-        shell: pwsh
-        run: |
-          Write-Host "🚀 Starting UiPath project deployment process..."
-          Write-Host "Environment: ${{ needs.config.outputs.environment }}"
-          Write-Host "Project Name: ${{ needs.config.outputs.project_name }}"
-          
-          # Add your deployment logic here
-          # For example, publishing to Orchestrator
-          Write-Host "✅ Deployment process completed successfully"
-
   # SUMMARY JOB - Always runs to provide workflow summary
   summary:
     runs-on: self-hosted
-    needs: [config, build, run, deploy]
+    needs: [config, build, run]
     if: always()
     steps:
       - name: Workflow Summary
@@ -406,7 +370,6 @@ jobs:
           Write-Host "Configuration:"
           Write-Host "  - Build: ${{ needs.config.outputs.build }}"
           Write-Host "  - Run: ${{ needs.config.outputs.run }}"
-          Write-Host "  - Deploy: ${{ needs.config.outputs.deploy }}"
           Write-Host "  - Environment: ${{ needs.config.outputs.environment }}"
           Write-Host "  - Project Name: ${{ needs.config.outputs.project_name }}"
           Write-Host ""
@@ -414,14 +377,12 @@ jobs:
           Write-Host "  - Config: ${{ needs.config.result }}"
           Write-Host "  - Build: ${{ needs.build.result }}"
           Write-Host "  - Run: ${{ needs.run.result }}"
-          Write-Host "  - Deploy: ${{ needs.deploy.result }}"
           Write-Host ""
           
           $overallSuccess = $true
           if ("${{ needs.config.result }}" -eq "failure") { $overallSuccess = $false }
           if ("${{ needs.config.outputs.build }}" -eq "true" -and "${{ needs.build.result }}" -eq "failure") { $overallSuccess = $false }
           if ("${{ needs.config.outputs.run }}" -eq "true" -and "${{ needs.run.result }}" -eq "failure") { $overallSuccess = $false }
-          if ("${{ needs.config.outputs.deploy }}" -eq "true" -and "${{ needs.deploy.result }}" -eq "failure") { $overallSuccess = $false }
           
           if ($overallSuccess) {
             Write-Host "🎉 WORKFLOW COMPLETED SUCCESSFULLY!" -ForegroundColor Green
