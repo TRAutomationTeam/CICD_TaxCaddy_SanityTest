@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS 
     Run UiPath Orchestrator Job via API with External Application authentication.
-    UPDATED: Works around 403 Forbidden errors by using Releases endpoint
+    UPDATED: Uses ModernJobsCount strategy - no robot resolution needed
 #>
 Param (
     [Parameter(Mandatory=$true)]
@@ -47,6 +47,13 @@ function WriteLog {
 }
 
 WriteLog "🚀 Starting UiPath Orchestrator Job via API..."
+WriteLog "Script Parameters:"
+WriteLog "  - Process Name: $processName"
+WriteLog "  - Orchestrator URL: $uriOrch"
+WriteLog "  - Tenant: $tenantlName"
+WriteLog "  - Account: $accountForApp"
+WriteLog "  - Folder: $folder_organization_unit"
+WriteLog "  - Timeout: $timeout"
 WriteLog "Available scopes: $applicationScope"
 
 # Define URLs
@@ -113,111 +120,26 @@ try {
     exit 1
 }
 
-# --- 3. Resolve Process Using Multiple Methods ---
-WriteLog "⚙️ Attempting to resolve process '$processName'..."
+# --- 3. Use Process Name Directly (Skip Process Resolution) ---
+WriteLog "⚙️ Using process name directly as ReleaseKey: $processName"
+$processKey = $processName
 
-$processKey = $null
-$attempts = @(
-    @{
-        Method = "Releases endpoint (recommended for limited scopes)"
-        Uri = "$orchestratorApiBase/odata/Releases?`$filter=(ProcessKey eq '$processName')"
-    },
-    @{
-        Method = "Processes endpoint (fallback)"
-        Uri = "$orchestratorApiBase/odata/Processes?`$filter=(ProcessKey eq '$processName')"
-    },
-    @{
-        Method = "Direct ProcessKey usage"
-        Uri = $null
-        DirectKey = $processName
-    }
-)
+# --- 4. Start Job Using ModernJobsCount Strategy (No Robot Resolution Needed) ---
+WriteLog "🚀 Starting job with ModernJobsCount strategy (automatic robot selection)..."
 
-foreach ($attempt in $attempts) {
-    try {
-        WriteLog "Trying: $($attempt.Method)"
-        
-        if ($attempt.Uri) {
-            WriteLog "URI: $($attempt.Uri)"
-            $response = Invoke-RestMethod -Uri $attempt.Uri -Method Get -Headers $headers -ErrorAction Stop
-            
-            if ($response.value -and $response.value.Count -gt 0) {
-                $processKey = $response.value[0].Key
-                WriteLog "✅ Found process using $($attempt.Method)! Key: $processKey"
-                break
-            } else {
-                WriteLog "No results with $($attempt.Method)"
-            }
-        } else {
-            # Direct key usage
-            $processKey = $attempt.DirectKey
-            WriteLog "✅ Using ProcessKey directly: $processKey"
-            break
-        }
-    }
-    catch {
-        WriteLog "Failed with $($attempt.Method): $($_.Exception.Message)"
-        if ($_.Exception.Response.StatusCode -eq 403) {
-            WriteLog "403 Forbidden - insufficient permissions for $($attempt.Method)"
-        }
-    }
-}
-
-if (-not $processKey) {
-    WriteLog "❌ Could not resolve process '$processName' with any method" -err
-    WriteLog "🔧 SOLUTIONS:" -err
-    WriteLog "   1. Verify the process name is correct: '$processName'" -err
-    WriteLog "   2. Ensure the process is published to the '$folder_organization_unit' folder" -err
-    WriteLog "   3. Ask admin to add process-related scopes to your external app" -err
-    exit 1
-}
-
-# --- 4. Resolve Robot ---
-if (-not $robots) {
-    WriteLog "❌ Robot name is required" -err
-    exit 1
-}
-
-try {
-    WriteLog "🤖 Resolving robot '$robots'..."
-    $robotUri = "$orchestratorApiBase/odata/Robots?`$filter=(Name eq '$robots')"
-    $robotResponse = Invoke-RestMethod -Uri $robotUri -Method Get -Headers $headers -ErrorAction Stop
-    
-    if (-not $robotResponse.value -or $robotResponse.value.Count -eq 0) {
-        WriteLog "❌ Robot '$robots' not found" -err
-        
-        # Try to list available robots for debugging
-        try {
-            $allRobotsUri = "$orchestratorApiBase/odata/Robots"
-            $allRobots = Invoke-RestMethod -Uri $allRobotsUri -Method Get -Headers $headers -ErrorAction Stop
-            WriteLog "Available robots in this folder:" -err
-            $allRobots.value | ForEach-Object { WriteLog "  - $($_.Name)" }
-        } catch {
-            WriteLog "Could not retrieve robot list for debugging" -err
-        }
-        exit 1
-    }
-    
-    $robotId = $robotResponse.value[0].Id
-    WriteLog "✅ Found robot ID: $robotId"
-    
-} catch {
-    WriteLog "❌ Error resolving robot: $($_.Exception.Message)" -err
-    exit 1
-}
-
-# --- 5. Start Job ---
-WriteLog "🚀 Starting job..."
 $startJobBody = @{
     "startInfo" = @{
         "ReleaseKey" = $processKey
-        "Strategy" = "Specific"
-        "RobotIds" = @($robotId)
+        "Strategy" = "ModernJobsCount"
         "JobsCount" = [int]$jobscount
         "JobPriority" = $priority
+        "RuntimeType" = "Unattended"
         "InputArguments" = "{}"
     }
 } | ConvertTo-Json -Depth 10
+
+WriteLog "Job request body:"
+WriteLog $startJobBody
 
 try {
     $startJobUri = "$orchestratorApiBase/odata/Jobs/UiPath.Server.Configuration.OData.StartJobs"
@@ -280,6 +202,20 @@ try {
     
     if ($_.Exception.Response.StatusCode -eq 403) {
         WriteLog "🔧 403 Forbidden - Your external app may need additional job execution permissions" -err
+        WriteLog "🔧 Ask admin to assign your external app to '$folder_organization_unit' folder with appropriate roles" -err
     }
+    
+    # Log detailed error response if available
+    if ($_.Exception.Response) {
+        try {
+            $errorStream = $_.Exception.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($errorStream)
+            $errorBody = $reader.ReadToEnd()
+            WriteLog "Error response body: $errorBody" -err
+        } catch {
+            WriteLog "Could not read error response body" -err
+        }
+    }
+    
     exit 1
 }
