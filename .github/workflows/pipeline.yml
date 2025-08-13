@@ -231,39 +231,12 @@ jobs:
           Write-Host "PROJECT_NAME value: '$projectName'"
           echo "project_name=$projectName" >> $env:GITHUB_OUTPUT
 
-  # BUILD JOB - Conditional build job (DISABLED - will always be skipped)
-  build:
-    runs-on: self-hosted
-    needs: [config]
-    # FORCE SKIP BUILD - Change this condition to false to always skip build
-    if: false  # This will always skip the build job
-    steps:
-      - name: Check out repository code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          force: true
-          set-safe-directory: true
-          lfs: false
-      
-      - name: Build UiPath Project
-        shell: pwsh
-        run: |
-          Write-Host "🔨 Starting UiPath project build process..."
-          Write-Host "Environment: ${{ needs.config.outputs.environment }}"
-          Write-Host "Project Name: ${{ needs.config.outputs.project_name }}"
-          
-          # Add your build logic here
-          # For example, using UiPath CLI to build the project
-          Write-Host "✅ Build process completed successfully"
-
-  # RUN JOB - Executes UiPath workflows (MODIFIED to run regardless of build)
+  # RUN JOB - Executes UiPath workflows (FIXED CONDITION - no build dependency)
   run:
     runs-on: self-hosted
     needs: [config]
-    # UPDATED CONDITION: Run if config succeeded and run=true, regardless of build status
-    if: always() && needs.config.result == 'success' && needs.config.outputs.run == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    # FIXED CONDITION: Run if config succeeded and run=true (no build dependency)
+    if: needs.config.result == 'success' && needs.config.outputs.run == 'true'
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -358,10 +331,10 @@ jobs:
             exit 1
           }
 
-  # SUMMARY JOB - Always runs to provide workflow summary
+  # SUMMARY JOB - Always runs to provide workflow summary (UPDATED - no build dependency)
   summary:
     runs-on: self-hosted
-    needs: [config, build, run]
+    needs: [config, run]
     if: always()
     steps:
       - name: Workflow Summary
@@ -370,25 +343,23 @@ jobs:
           Write-Host "📊 WORKFLOW EXECUTION SUMMARY"
           Write-Host "================================"
           Write-Host "Configuration:"
-          Write-Host "  - Build: ${{ needs.config.outputs.build }} (FORCED TO SKIP)"
+          Write-Host "  - Build: DISABLED (not included in workflow)"
           Write-Host "  - Run: ${{ needs.config.outputs.run }}"
           Write-Host "  - Environment: ${{ needs.config.outputs.environment }}"
           Write-Host "  - Project Name: ${{ needs.config.outputs.project_name }}"
           Write-Host ""
           Write-Host "Job Results:"
           Write-Host "  - Config: ${{ needs.config.result }}"
-          Write-Host "  - Build: ${{ needs.build.result }} (INTENTIONALLY SKIPPED)"
           Write-Host "  - Run: ${{ needs.run.result }}"
           Write-Host ""
           
           $overallSuccess = $true
           if ("${{ needs.config.result }}" -eq "failure") { $overallSuccess = $false }
-          # Don't check build result since we're intentionally skipping it
           if ("${{ needs.config.outputs.run }}" -eq "true" -and "${{ needs.run.result }}" -eq "failure") { $overallSuccess = $false }
           
           if ($overallSuccess) {
             Write-Host "🎉 WORKFLOW COMPLETED SUCCESSFULLY!" -ForegroundColor Green
-            Write-Host "Note: Build job was intentionally skipped" -ForegroundColor Yellow
+            Write-Host "Note: Build job was not included in this workflow" -ForegroundColor Yellow
           } else {
             Write-Host "❌ WORKFLOW COMPLETED WITH ERRORS!" -ForegroundColor Red
             exit 1
