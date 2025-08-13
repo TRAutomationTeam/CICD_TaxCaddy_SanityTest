@@ -87,7 +87,6 @@ if ($uriOrch -match "^(https?:\/\/[^\/]+)\/") {
 }
 WriteLog "Determined Identity Server Root URL for token acquisition: $identityServerRoot"
 
-
 # --- 1. Get Access Token from External Application Credentials ---
 Function Get-OrchestratorAccessToken {
     Param (
@@ -103,7 +102,6 @@ Function Get-OrchestratorAccessToken {
     $identityUrl = "$($identityBaseUrl)/identity_/connect/token" 
     WriteLog "Identity URL for token: $identityUrl"
 
-    # >>>>>>>>>>>>>>>>>>>> CRITICAL CHANGE STARTS HERE <<<<<<<<<<<<<<<<<<<<
     # Define parameters as a hashtable. Invoke-RestMethod will convert this to x-www-form-urlencoded
     # when ContentType is set correctly.
     $bodyParams = @{
@@ -122,7 +120,6 @@ Function Get-OrchestratorAccessToken {
         WriteLog "Invoking Invoke-RestMethod for access token..."
         # Pass the hashtable directly as Body, and set ContentType to application/x-www-form-urlencoded
         $response = Invoke-RestMethod -Uri $identityUrl -Method Post -ContentType "application/x-www-form-urlencoded" -Body $bodyParams -ErrorAction Stop 
-        # >>>>>>>>>>>>>>>>>>>> CRITICAL CHANGE ENDS HERE <<<<<<<<<<<<<<<<<<<<
         
         WriteLog "Invoke-RestMethod for access token completed."
         if ($response.access_token) {
@@ -137,7 +134,6 @@ Function Get-OrchestratorAccessToken {
         WriteLog "Error getting access token: $($_.Exception.Message)" -err
         WriteLog "Check identity URL: $identityUrl and external app credentials." -err
         # Log the full error response if available from $_.Exception.Response
-        # $_.Exception.Response is an System.Net.WebResponse, you need to read its content.
         if ($_.Exception.Response) {
             try {
                 $errorResponseStream = $_.Exception.Response.GetResponseStream()
@@ -160,10 +156,11 @@ $accessToken = Get-OrchestratorAccessToken `
     -applicationScope $applicationScope `
     -identityBaseUrl $identityServerRoot 
 
+# CRITICAL FIX: Add X-UIPATH-AccountName header for Cloud Orchestrator
 $headers = @{
     "Authorization" = "Bearer $accessToken"
-    "X-UIPATH-TenantName" = $tenantlName # Or X-UIPATH-OrganizationUnitId if you have the ID
-    # Add X-UIPATH-AccountName for Cloud Orchestrator if needed.
+    "X-UIPATH-TenantName" = $tenantlName
+    "X-UIPATH-AccountName" = $accountForApp  # Required for Cloud Orchestrator
 }
 WriteLog "Initial headers set: $(ConvertTo-Json $headers)"
 
@@ -179,41 +176,84 @@ Function Resolve-OrchestratorId {
         [string]$idProperty # e.g., "Id", "Key"
     )
     WriteLog "Resolving $endpoint '$nameToResolve'..."
-    # IMPORTANT: Use $orchestratorApiBase for all OData calls
-    $uri = "$orchestratorApiBase/odata/$endpoint`$filter=($filterProperty eq '$nameToResolve')"
-    WriteLog "Resolution URI: $uri"
-    WriteLog "Resolution Headers: $(ConvertTo-Json $headers)"
+    
+    # For Folders, try to get all folders first, then filter locally
+    if ($endpoint -eq "Folders") {
+        $uri = "$orchestratorApiBase/odata/Folders"
+        WriteLog "Getting all folders first: $uri"
+        
+        try {
+            $response = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers -ErrorAction Stop
+            WriteLog "Retrieved $($response.value.Count) folders"
+            
+            # Filter locally for the folder we want
+            $matchingFolder = $response.value | Where-Object { $_.($filterProperty) -eq $nameToResolve }
+            if ($matchingFolder) {
+                WriteLog "Found '$nameToResolve' ID: $($matchingFolder.($idProperty))"
+                return $matchingFolder.($idProperty)
+            } else {
+                WriteLog "Could not find folder '$nameToResolve' in available folders:" -err
+                $response.value | ForEach-Object { WriteLog "  - $($_.DisplayName) (ID: $($_.Id))" }
+                exit 1
+            }
+        }
+        catch {
+            WriteLog "Error getting folders: $($_.Exception.Message)" -err
+            if ($_.Exception.Response) {
+                try {
+                    $errorResponseStream = $_.Exception.Response.GetResponseStream()
+                    $reader = New-Object System.IO.StreamReader($errorResponseStream)
+                    $responseBody = $reader.ReadToEnd()
+                    WriteLog "Full error response body from folder resolution: $responseBody" -err
+                } catch {
+                    WriteLog "Could not read full error response body: $($_.Exception.Message)" -err
+                }
+            }
+            exit 1
+        }
+    } else {
+        # For other endpoints, use the original logic but with proper headers
+        $uri = "$orchestratorApiBase/odata/$endpoint`?`$filter=($filterProperty eq '$nameToResolve')"
+        WriteLog "Resolution URI: $uri"
+        WriteLog "Resolution Headers: $(ConvertTo-Json $headers)"
 
-    try {
-        WriteLog "Invoking Invoke-RestMethod for ID resolution..."
-        $response = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers -ErrorAction Stop
-        WriteLog "Invoke-RestMethod for ID resolution completed."
-        if ($response.value -and $response.value.Count -gt 0) {
-            WriteLog "Found '$nameToResolve' ID: $($response.value[0].($idProperty))"
-            return $response.value[0].($idProperty)
-        } else {
-            WriteLog "Could not find $endpoint '$nameToResolve'. Response: $($response | Out-String)" -err
+        try {
+            WriteLog "Invoking Invoke-RestMethod for ID resolution..."
+            $response = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers -ErrorAction Stop
+            WriteLog "Invoke-RestMethod for ID resolution completed."
+            if ($response.value -and $response.value.Count -gt 0) {
+                WriteLog "Found '$nameToResolve' ID: $($response.value[0].($idProperty))"
+                return $response.value[0].($idProperty)
+            } else {
+                WriteLog "Could not find $endpoint '$nameToResolve'. Response: $($response | Out-String)" -err
+                exit 1
+            }
+        }
+        catch {
+            WriteLog "Error resolving $endpoint '$nameToResolve': $($_.Exception.Message)" -err
+            if ($_.Exception.Response) {
+                try {
+                    $errorResponseStream = $_.Exception.Response.GetResponseStream()
+                    $reader = New-Object System.IO.StreamReader($errorResponseStream)
+                    $responseBody = $reader.ReadToEnd()
+                    WriteLog "Full error response body from ID resolution: $responseBody" -err
+                } catch {
+                    WriteLog "Could not read full error response body: $($_.Exception.Message)" -err
+                }
+            }
             exit 1
         }
     }
-    catch {
-        WriteLog "Error resolving $endpoint '$nameToResolve': $($_.Exception.Message)" -err
-        if ($_.Exception.Response) {
-            try {
-                $errorResponseStream = $_.Exception.Response.GetResponseStream()
-                $reader = New-Object System.IO.StreamReader($errorResponseStream)
-                $responseBody = $reader.ReadToEnd()
-                WriteLog "Full error response body from ID resolution: $responseBody" -err
-            } catch {
-                WriteLog "Could not read full error response body: $($_.Exception.Message)" -err
-            }
-        }
-        exit 1
-    }
 }
 
-# The -orchestratorUrl parameter is no longer necessary for Resolve-OrchestratorId because it now uses the global $orchestratorApiBase
+# Resolve folder first to get the OrganizationUnitId for subsequent requests
 $folderId = Resolve-OrchestratorId -headers $headers -endpoint "Folders" -nameToResolve $folder_organization_unit -filterProperty "DisplayName" -idProperty "Id"
+
+# Add the OrganizationUnitId header for folder-scoped requests
+$headers."X-UIPATH-OrganizationUnitId" = $folderId
+WriteLog "Updated headers with X-UIPATH-OrganizationUnitId: $(ConvertTo-Json $headers)"
+
+# Now resolve process with the updated headers
 $processKey = Resolve-OrchestratorId -headers $headers -endpoint "Processes" -nameToResolve $processName -filterProperty "ProcessKey" -idProperty "Key"
 
 # Robot/Machine ID resolution is more complex based on how you specify robots/machines
@@ -271,117 +311,3 @@ if ($input_path -ne "") {
         WriteLog "Input arguments file not found at: $input_path" -err
         exit 1
     }
-}
-
-# Use the newly defined $orchestratorApiBase for the StartJobs URI
-$startJobUri = "$orchestratorApiBase/odata/Jobs/UiPath.OData.V2.StartJobs"
-
-# For modern folders, Orchestrator expects the X-UIPATH-OrganizationUnitId header for many API calls.
-# Add it to the headers.
-$headers."X-UIPATH-OrganizationUnitId" = $folderId
-WriteLog "Updated headers with X-UIPATH-OrganizationUnitId: $(ConvertTo-Json $headers)"
-
-WriteLog "Triggering Orchestrator Job for Process '$processName' in Folder '$folder_organization_unit'..."
-WriteLog "Start Job URI: $startJobUri"
-WriteLog "Request Body: $(ConvertTo-Json $startJobBody -Depth 10)"
-
-# --- 4. Execute Start Job API Call ---
-WriteLog "Invoking Invoke-RestMethod to start job..."
-try {
-    $startJobResponse = Invoke-RestMethod -Uri $startJobUri -Method Post -Headers $headers -ContentType "application/json" -Body (ConvertTo-Json $startJobBody -Depth 10) -ErrorAction Stop
-    WriteLog "Invoke-RestMethod to start job completed successfully."
-    WriteLog "Job start request sent. Response: $($startJobResponse | Out-String)"
-
-    if ($startJobResponse.value -and $startJobResponse.value.Count -gt 0) {
-        $startedJobId = $startJobResponse.value[0].Id
-        WriteLog "Started UiPath Job with ID: $startedJobId"
-
-        # --- 5. Poll for Job Completion (if wait is true) ---
-        if ($wait -eq "true") {
-            WriteLog "Waiting for job '$startedJobId' to complete (timeout: $timeout seconds)..."
-            $startTime = Get-Date
-            $jobStatus = ""
-            $pollingInterval = 10 # seconds
-
-            while ($jobStatus -ne "Successful" -and $jobStatus -ne "Failed" -and $jobStatus -ne "Stopped" -and $jobStatus -ne "Faulted") {
-                if (((Get-Date) - $startTime).TotalSeconds -gt $timeout) {
-                    WriteLog "Job '$startedJobId' timed out after $timeout seconds. Current status: $jobStatus" -err
-                    exit 1
-                }
-
-                Start-Sleep -Seconds $pollingInterval
-                
-                # Get job status
-                # Use the newly defined $orchestratorApiBase for the job status URI
-                $jobStatusUri = "$orchestratorApiBase/odata/Jobs(`$filter=Id eq $startedJobId)"
-                WriteLog "Polling job status URI: $jobStatusUri"
-                WriteLog "Polling job status Headers: $(ConvertTo-Json $headers)"
-                try {
-                    $jobResponse = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
-                } catch {
-                    WriteLog "Error during job status polling: $($_.Exception.Message)" -err
-                    if ($_.Exception.Response) {
-                        try {
-                            $errorResponseStream = $_.Exception.Response.GetResponseStream()
-                            $reader = New-Object System.IO.StreamReader($errorResponseStream)
-                            $responseBody = $reader.ReadToEnd()
-                            WriteLog "Full error response body from job status polling: $responseBody" -err
-                        } catch {
-                            WriteLog "Could not read full error response body: $($_.Exception.Message)" -err
-                        }
-                    }
-                    WriteLog "Exiting polling loop due to error."
-                    $jobStatus = "ErrorPolling" # Set to a non-terminal status to exit loop
-                    break
-                }
-                
-
-                if ($jobResponse.value -and $jobResponse.value.Count -gt 0) {
-                    $jobStatus = $jobResponse.value[0].State
-                    WriteLog "Job '$startedJobId' current status: $jobStatus"
-                } else {
-                    WriteLog "Could not retrieve status for job '$startedJobId'. Response: $($jobResponse | Out-String)" -err
-                    # This might indicate the job was never created or there's an API issue.
-                    break
-                }
-            }
-
-            WriteLog "Job '$startedJobId' completed with status: $jobStatus"
-
-            if ($jobStatus -eq "Successful") {
-                WriteLog "Job completed successfully."
-                if ($result_path -ne "") {
-                    $jobResponse.value[0] | ConvertTo-Json -Depth 10 | Set-Content $result_path
-                    WriteLog "Job final status written to $result_path"
-                }
-                exit 0
-            } elseif ($fail_when_job_fails -eq "true" -and ($jobStatus -eq "Failed" -or $jobStatus -eq "Stopped" -or $jobStatus -eq "Faulted" -or $jobStatus -eq "ErrorPolling")) {
-                WriteLog "Job failed, stopped, faulted, or encountered polling error, and 'fail_when_job_fails' is true. Exiting with error." -err
-                exit 1
-            } else {
-                WriteLog "Job failed or stopped, but 'fail_when_job_fails' is false. Exiting gracefully."
-                exit 0
-            }
-        } else { # If not waiting for job completion
-            WriteLog "Job triggered successfully, but not waiting for completion (wait=false)."
-            exit 0
-        }
-    } else {
-        WriteLog "Failed to start job. No job ID in response. Response: $($startJobResponse | Out-String)" -err
-        exit 1
-    }
-}
-catch {
-    WriteLog "Error starting job: $($_.Exception.Message)" -err
-    if ($_.Exception.Response) {
-        try {
-            $errorResponseStream = $_.Exception.Response.GetResponseStream()
-            $reader = New-Object System.IO.StreamReader($errorResponseStream)
-            $responseBody = $reader.ReadToEnd()
-            WriteLog "Full error response body from StartJobs: $responseBody" -err
-        } catch {
-            WriteLog "Could not read full error response body: $($_.Exception.Message)" -err
-        }
-    }
-    exit 1
-}
