@@ -341,6 +341,18 @@ jobs:
             Write-Host "Starting UiPath job run"
             Write-Host "PROJECT_NAME from config: ${{ env.PROJECT_NAME }}"
             
+            # DEBUG: Print all authentication values (masking sensitive ones)
+            Write-Host "=== DEBUG: Authentication Values ==="
+            Write-Host "ORCH_URL: ${{ env.ORCH_URL }}"
+            Write-Host "ORCH_TENANT: ${{ env.ORCH_TENANT }}"
+            Write-Host "ORCH_ACC_NAME: ${{ env.ORCH_ACC_NAME }}"
+            Write-Host "ORCH_APP_ID: ${{ env.ORCH_APP_ID }}"
+            Write-Host "ORCH_APP_SECRET: $(if($env:UIPATH_APP_SECRET) { $env:UIPATH_APP_SECRET.Substring(0, [Math]::Min(4, $env:UIPATH_APP_SECRET.Length)) + '***' } else { 'NOT SET' })"
+            Write-Host "ORCH_APP_SCOPE: $env:UIPATH_APP_SCOPE"
+            Write-Host "ORCH_APP_SCOPE Length: $($env:UIPATH_APP_SCOPE.Length) characters"
+            Write-Host "ORCH_APP_SCOPE Word Count: $(($env:UIPATH_APP_SCOPE -split '\s+').Count) scopes"
+            Write-Host "=================================="
+            
             $jobRunScript = "${{ github.workspace }}\scripts\UiPathJobRun.ps1"
             if (-not (Test-Path $jobRunScript)) {
               Write-Host "UiPathJobRun.ps1 not found at: $jobRunScript"
@@ -358,7 +370,23 @@ jobs:
             Write-Host "  CLI Path: ${{ env.UIPATH_CLI_PATH }}"
             Write-Host "  Timeout: ${{ env.TIMEOUT_SEC }}"
             
-            # FIXED: Use ONLY external app authentication - REMOVED -accountName parameter
+            # DEBUG: Print the exact parameters that will be passed to the script
+            Write-Host "=== DEBUG: Script Parameters ==="
+            Write-Host "processName: '${{ env.PROJECT_NAME }}'"
+            Write-Host "uriOrch: '${{ env.ORCH_URL }}'"
+            Write-Host "tenantlName: '${{ env.ORCH_TENANT }}'"
+            Write-Host "accountForApp: '${{ env.ORCH_ACC_NAME }}'"
+            Write-Host "applicationId: '${{ env.ORCH_APP_ID }}'"
+            Write-Host "applicationSecret: $(if($env:UIPATH_APP_SECRET) { 'SET (length: ' + $env:UIPATH_APP_SECRET.Length + ')' } else { 'NOT SET' })"
+            Write-Host "applicationScope: '$env:UIPATH_APP_SCOPE'"
+            Write-Host "folder_organization_unit: '${{ env.FOLDER_ORG_UNIT }}'"
+            Write-Host "machine: '${{ env.MACHINE }}'"
+            Write-Host "robots: '${{ env.ROBOT }}'"
+            Write-Host "uipathCliFilePath: '${{ env.UIPATH_CLI_PATH }}'"
+            Write-Host "timeout: '${{ env.TIMEOUT_SEC }}'"
+            Write-Host "==============================="
+            
+            # Call the script with all parameters
             & $jobRunScript `
               -processName "${{ env.PROJECT_NAME }}" `
               -uriOrch "${{ env.ORCH_URL }}" `
