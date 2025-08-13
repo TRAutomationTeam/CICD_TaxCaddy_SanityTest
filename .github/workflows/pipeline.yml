@@ -261,7 +261,7 @@ jobs:
   # RUN JOB - Executes UiPath workflows (MODIFIED to run regardless of build)
   run:
     runs-on: self-hosted
-    needs: [config, build]
+    needs: [config]
     # UPDATED CONDITION: Run if config succeeded and run=true, regardless of build status
     if: always() && needs.config.result == 'success' && needs.config.outputs.run == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped')
     steps:
