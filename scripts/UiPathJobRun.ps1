@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS 
     Run UiPath Orchestrator Job via API with External Application authentication.
-    UPDATED: Automatically finds ReleaseKey GUID via API call
+    UPDATED: Automatically finds ReleaseKey GUID via API call and supports machine/robot targeting
 #>
 Param (
     [Parameter(Mandatory=$true)]
@@ -53,6 +53,8 @@ WriteLog "  - Orchestrator URL: $uriOrch"
 WriteLog "  - Tenant: $tenantlName"
 WriteLog "  - Account: $accountForApp"
 WriteLog "  - Folder: $folder_organization_unit"
+WriteLog "  - Robot: $robots"
+WriteLog "  - Machine: $machine"
 WriteLog "  - Timeout: $timeout"
 
 # Define URLs
@@ -119,7 +121,7 @@ try {
     exit 1
 }
 
-# --- 3. NEW: Find ReleaseKey by Looking Up Process/Release ---
+# --- 3. Find ReleaseKey by Looking Up Process/Release ---
 WriteLog "🔍 Looking up ReleaseKey for process '$processName'..."
 
 $releaseKey = $null
@@ -138,15 +140,6 @@ foreach ($endpoint in $endpoints) {
         
         if ($response.value) {
             WriteLog "Found $($response.value.Count) items in $($endpoint.Name)"
-            
-            # List all available processes for debugging
-            WriteLog "Available processes in $($endpoint.Name):"
-            $response.value | ForEach-Object {
-                $name = $_."$($endpoint.NameField)"
-                $key = $_."$($endpoint.KeyField)"
-                $processKey = if ($endpoint.ProcessField) { $_."$($endpoint.ProcessField)" } else { $key }
-                WriteLog "  - Name: '$name', Key: '$key', ProcessKey: '$processKey'"
-            }
             
             # Try to find exact match by name
             $foundProcess = $response.value | Where-Object { 
@@ -215,16 +208,130 @@ if (-not $releaseKey) {
     $releaseKey = $processName
 }
 
-# --- 4. Start Job with Found ReleaseKey ---
+# --- 4. Get Robot and Machine Information for Targeting ---
+WriteLog "🤖 Looking up Robot and Machine information for targeting..."
+
+$robotId = $null
+$machineId = $null
+
+# Look up Robot ID if robot name is provided
+if ($robots -and $robots.Trim() -ne "") {
+    try {
+        WriteLog "🔍 Looking up Robot: '$robots'"
+        $usersUri = "$orchestratorApiBase/odata/Users"
+        $usersResponse = Invoke-RestMethod -Uri $usersUri -Method Get -Headers $headers -ErrorAction Stop
+        
+        $targetRobot = $usersResponse.value | Where-Object { 
+            $_.Name -eq $robots -and $_.Type -eq "Robot"
+        }
+        
+        if ($targetRobot) {
+            $robotId = $targetRobot.Id
+            WriteLog "✅ Found Robot '$robots' with ID: $robotId"
+        } else {
+            WriteLog "⚠️ Robot '$robots' not found"
+            WriteLog "Available robots:"
+            $usersResponse.value | Where-Object { $_.Type -eq "Robot" } | ForEach-Object {
+                WriteLog "  - Robot: '$($_.Name)' (ID: $($_.Id))"
+            }
+        }
+    } catch {
+        WriteLog "⚠️ Error looking up robot: $($_.Exception.Message)"
+    }
+} else {
+    WriteLog "ℹ️ No robot name specified, will use dynamic allocation"
+}
+
+# Look up Machine ID if machine name is provided
+if ($machine -and $machine.Trim() -ne "") {
+    try {
+        WriteLog "🔍 Looking up Machine: '$machine'"
+        $machinesUri = "$orchestratorApiBase/odata/Machines"
+        $machinesResponse = Invoke-RestMethod -Uri $machinesUri -Method Get -Headers $headers -ErrorAction Stop
+        
+        $targetMachine = $machinesResponse.value | Where-Object { 
+            $_.Name -eq $machine
+        }
+        
+        if ($targetMachine) {
+            $machineId = $targetMachine.Id
+            WriteLog "✅ Found Machine '$machine' with ID: $machineId"
+        } else {
+            WriteLog "⚠️ Machine '$machine' not found"
+            WriteLog "Available machines:"
+            $machinesResponse.value | ForEach-Object {
+                WriteLog "  - Machine: '$($_.Name)' (ID: $($_.Id))"
+            }
+        }
+    } catch {
+        WriteLog "⚠️ Error looking up machine: $($_.Exception.Message)"
+    }
+} else {
+    WriteLog "ℹ️ No machine name specified, will use dynamic allocation"
+}
+
+# --- 5. Start Job with Machine/Robot Targeting ---
 WriteLog "🚀 Starting job with ReleaseKey: $releaseKey"
 
-# Use the most basic strategy that should work
-$startJobBody = @{
-    "startInfo" = @{
-        "ReleaseKey" = $releaseKey
-        "JobsCount" = [int]$jobscount
-        "InputArguments" = "{}"
+# Build the job request with specific targeting
+$startInfo = @{
+    "ReleaseKey" = $releaseKey
+    "JobsCount" = [int]$jobscount
+    "InputArguments" = "{}"
+}
+
+# Add Strategy and RuntimeType for better control
+$startInfo["Strategy"] = "ModernJobsCount"
+$startInfo["RuntimeType"] = $job_type
+
+# Add robot targeting if we found the robot
+if ($robotId) {
+    $startInfo["RobotIds"] = @([int]$robotId)
+    WriteLog "✅ Targeting specific Robot ID: $robotId"
+}
+
+# Add machine targeting if we found the machine
+if ($machineId) {
+    # Try to get machine sessions for the target machine
+    try {
+        WriteLog "🔍 Looking for active sessions on machine '$machine'..."
+        $machineSessionsUri = "$orchestratorApiBase/odata/Sessions?\$filter=Machine/Id eq $machineId and State eq 'Available'"
+        $sessionsResponse = Invoke-RestMethod -Uri $machineSessionsUri -Method Get -Headers $headers -ErrorAction Stop
+        
+        if ($sessionsResponse.value -and $sessionsResponse.value.Count -gt 0) {
+            $sessionId = $sessionsResponse.value[0].Id
+            $startInfo["MachineSessionIds"] = @([int]$sessionId)
+            WriteLog "✅ Targeting Machine Session ID: $sessionId for Machine: $machine"
+        } else {
+            WriteLog "⚠️ No available sessions found for machine '$machine', trying fallback method"
+            # Fallback: try using MachineIds (for older Orchestrator versions or different configurations)
+            $startInfo["MachineIds"] = @([int]$machineId)
+            WriteLog "✅ Targeting Machine ID: $machineId (fallback method)"
+        }
+    } catch {
+        WriteLog "⚠️ Could not get machine sessions: $($_.Exception.Message)"
+        WriteLog "⚠️ Using MachineIds fallback method"
+        $startInfo["MachineIds"] = @([int]$machineId)
+        WriteLog "✅ Targeting Machine ID: $machineId"
     }
+}
+
+# Log targeting summary
+WriteLog "📋 Job Targeting Summary:"
+if ($robotId) {
+    WriteLog "   🤖 Robot: '$robots' (ID: $robotId)"
+} else {
+    WriteLog "   🤖 Robot: Dynamic allocation (no specific robot)"
+}
+
+if ($machineId) {
+    WriteLog "   💻 Machine: '$machine' (ID: $machineId)"
+} else {
+    WriteLog "   💻 Machine: Dynamic allocation (no specific machine)"
+}
+
+$startJobBody = @{
+    "startInfo" = $startInfo
 } | ConvertTo-Json -Depth 10
 
 WriteLog "Job request body:"
@@ -254,10 +361,14 @@ try {
                     $jobStatus = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
                     
                     $status = $jobStatus.State
-                    WriteLog "Job status: $status (elapsed: $([math]::Round($elapsedSeconds))s)"
+                    $machineName = if ($jobStatus.Robot -and $jobStatus.Robot.MachineName) { $jobStatus.Robot.MachineName } else { "Unknown" }
+                    $robotName = if ($jobStatus.Robot -and $jobStatus.Robot.Name) { $jobStatus.Robot.Name } else { "Unknown" }
+                    
+                    WriteLog "Job status: $status (elapsed: $([math]::Round($elapsedSeconds))s) - Running on Machine: $machineName, Robot: $robotName"
                     
                     if ($status -in @("Successful", "Failed", "Stopped", "Faulted")) {
                         WriteLog "✅ Job completed with status: $status"
+                        WriteLog "📍 Final execution details - Machine: $machineName, Robot: $robotName"
                         
                         if ($fail_when_job_fails -eq "true" -and $status -in @("Failed", "Faulted")) {
                             WriteLog "❌ Job failed with status: $status" -err
@@ -307,6 +418,7 @@ try {
     WriteLog "🔧 TROUBLESHOOTING:" -err
     WriteLog "   1. Verify process '$processName' exists and is published" -err
     WriteLog "   2. Check if your external app has execution permissions" -err
-    WriteLog "   3. Ask admin to add 'OR.Execution' scope to your external application" -err
+    WriteLog "   3. Verify robot '$robots' and machine '$machine' exist and are available" -err
+    WriteLog "   4. Ask admin to add required scopes to your external application" -err
     exit 1
 }
