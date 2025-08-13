@@ -41,12 +41,31 @@ Param (
 )
 
 function WriteLog {
-    # ... (Keep your existing WriteLog function)
+    Param(
+        [Parameter(Mandatory=$true)]
+        [string]$Message,
+        [switch]$err,
+        [switch]$noTimestamp
+    )
+    $timestamp = if ($noTimestamp) { "" } else { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') " }
+    $logEntry = "$timestamp$Message"
+    if ($err) {
+        Write-Error $logEntry
+        Add-Content -Path $debugLog -Value $logEntry
+    } else {
+        Write-Host $logEntry
+        Add-Content -Path $debugLog -Value $logEntry
+    }
 }
 
 # Running Path for log file
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 $debugLog = "$scriptPath\orchestrator-job-run.log"
+
+# Clear previous log file on each run for fresh logs
+if (Test-Path $debugLog) {
+    Remove-Item $debugLog -Force
+}
 
 WriteLog "Starting UiPath Orchestrator Job via API..."
 
@@ -61,16 +80,8 @@ Function Get-OrchestratorAccessToken {
     )
     WriteLog "Attempting to get access token for external application..."
     
-    # Construct the authentication URL
-    # For Cloud Orchestrator, this is typically the identity URL
-    # For on-prem, it might be {orchestratorUrl}/identity_/connect/token
-    # You'll need to confirm the exact endpoint for your Orchestrator setup.
-    # For Cloud, the tenant is often part of the URL (e.g., cloud.uipath.com/{account}/identity_/connect/token)
-    # The example uses https://orchestrator.myorg.com, so assuming on-prem/dedicated cloud instance structure
     $identityUrl = "$($orchestratorUrl)/identity_/connect/token" 
-    # NOTE: For cloud Orchestrator, it might be: "https://cloud.uipath.com/$accountName/identity_/connect/token"
-    # or you might need a separate discovery call to find the identity provider.
-    # The CLI typically handles this complexity. For direct API, you need to know it.
+    WriteLog "Identity URL for token: $identityUrl"
 
     $body = @{
         "grant_type"    = "client_credentials";
@@ -78,9 +89,12 @@ Function Get-OrchestratorAccessToken {
         "client_secret" = $applicationSecret;
         "scope"         = $applicationScope;
     } | ConvertTo-Json
+    WriteLog "Token request body (masked secret): $(($body | ConvertFrom-Json | Select-Object -ExcludeProperty client_secret) | ConvertTo-Json -Depth 1)"
 
     try {
+        WriteLog "Invoking Invoke-RestMethod for access token..."
         $response = Invoke-RestMethod -Uri $identityUrl -Method Post -ContentType "application/json" -Body $body -ErrorAction Stop
+        WriteLog "Invoke-RestMethod for access token completed."
         if ($response.access_token) {
             WriteLog "Successfully retrieved access token."
             return $response.access_token
@@ -110,6 +124,7 @@ $headers = @{
     "X-UIPATH-TenantName" = $tenantlName # Or X-UIPATH-OrganizationUnitId if you have the ID
     # Add X-UIPATH-AccountName for Cloud Orchestrator if needed.
 }
+WriteLog "Initial headers set: $(ConvertTo-Json $headers)"
 
 # --- 2. Resolve IDs (Folder, Process, Robots/Machine) ---
 # This is crucial because StartJobs API takes IDs, not names.
@@ -125,9 +140,13 @@ Function Resolve-OrchestratorId {
     )
     WriteLog "Resolving $endpoint '$nameToResolve'..."
     $uri = "$orchestratorUrl/odata/$endpoint`$filter=($filterProperty eq '$nameToResolve')"
+    WriteLog "Resolution URI: $uri"
+    WriteLog "Resolution Headers: $(ConvertTo-Json $headers)"
 
     try {
+        WriteLog "Invoking Invoke-RestMethod for ID resolution..."
         $response = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers -ErrorAction Stop
+        WriteLog "Invoke-RestMethod for ID resolution completed."
         if ($response.value -and $response.value.Count -gt 0) {
             WriteLog "Found '$nameToResolve' ID: $($response.value[0].($idProperty))"
             return $response.value[0].($idProperty)
@@ -138,6 +157,12 @@ Function Resolve-OrchestratorId {
     }
     catch {
         WriteLog "Error resolving $endpoint '$nameToResolve': $($_.Exception.Message)" -err
+        if ($_.Exception.Response) {
+            $errorResponse = $_.Exception.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($errorResponse)
+            $responseBody = $reader.ReadToEnd()
+            WriteLog "Full error response body from ID resolution: $responseBody" -err
+        }
         exit 1
     }
 }
@@ -149,6 +174,7 @@ $processKey = Resolve-OrchestratorId -orchestratorUrl $uriOrch -headers $headers
 $targetRobotIds = @()
 if ($robots -ne "") {
     $robotNames = $robots.Split(',') | ForEach-Object { $_.Trim() }
+    WriteLog "Resolving Robot IDs for names: $robots"
     foreach ($robotName in $robotNames) {
         $robotId = Resolve-OrchestratorId -orchestratorUrl $uriOrch -headers $headers -endpoint "Robots" -nameToResolve $robotName -filterProperty "Name" -idProperty "Id"
         if ($robotId) { $targetRobotIds += $robotId }
@@ -157,15 +183,14 @@ if ($robots -ne "") {
         WriteLog "No valid Robot IDs found for names: $robots" -err
         exit 1
     }
+    WriteLog "Resolved Robot IDs: $($targetRobotIds -join ', ')"
 } elseif ($machine -ne "") {
-    # If starting on a machine, you typically use MachineKey or MachineId and specify RobotType (e.g., Unattended)
-    # This requires more complex logic. For simplicity, if only machine is given, you might list all robots on that machine,
-    # or rely on Orchestrator's automatic provisioning for unattended robots.
-    # The StartJobs API usually expects RobotIds for unattended jobs directly, or a combination for elastic robots.
-    # For now, let's assume `robots` is the primary way to specify targets for unattended.
     WriteLog "Specifying 'machine' alone for job execution often requires more advanced Orchestrator setup (e.g. elastic robots or using all robots on that machine)."
     WriteLog "For unattended jobs, specifying specific 'robots' is generally more straightforward for API calls."
-    # You might get all robots for a given machine and use their IDs here, but that's out of scope for a basic example.
+    # If your setup requires finding robots via machine, you'd add that logic here.
+    WriteLog "Using Machine: '$machine'. Script is currently designed to use 'robots' parameter primarily for specific targets." -err
+    WriteLog "If 'machine' is required, implement logic to find robots associated with this machine here or modify StartInfo strategy." -err
+    exit 1 # Exiting because the current script requires robots to be specified for specific strategy.
 } else {
     WriteLog "Either 'robots' or 'machine' (or both) must be specified for job execution target." -err
     exit 1
@@ -191,6 +216,7 @@ if ($input_path -ne "") {
         try {
             $inputArgs | ConvertFrom-Json | Out-Null
             $startJobBody.startInfo.InputArguments = $inputArgs
+            WriteLog "Input arguments loaded from '$input_path' and validated."
         } catch {
             WriteLog "Input arguments file '$input_path' does not contain valid JSON." -err
             exit 1
@@ -206,14 +232,17 @@ $startJobUri = "$uriOrch/odata/Jobs/UiPath.OData.V2.StartJobs"
 # For modern folders, Orchestrator expects the X-UIPATH-OrganizationUnitId header for many API calls.
 # Add it to the headers.
 $headers."X-UIPATH-OrganizationUnitId" = $folderId
+WriteLog "Updated headers with X-UIPATH-OrganizationUnitId: $(ConvertTo-Json $headers)"
 
 WriteLog "Triggering Orchestrator Job for Process '$processName' in Folder '$folder_organization_unit'..."
 WriteLog "Start Job URI: $startJobUri"
 WriteLog "Request Body: $(ConvertTo-Json $startJobBody -Depth 10)"
 
 # --- 4. Execute Start Job API Call ---
+WriteLog "Invoking Invoke-RestMethod to start job..."
 try {
     $startJobResponse = Invoke-RestMethod -Uri $startJobUri -Method Post -Headers $headers -ContentType "application/json" -Body (ConvertTo-Json $startJobBody -Depth 10) -ErrorAction Stop
+    WriteLog "Invoke-RestMethod to start job completed successfully."
     WriteLog "Job start request sent. Response: $($startJobResponse | Out-String)"
 
     if ($startJobResponse.value -and $startJobResponse.value.Count -gt 0) {
@@ -237,8 +266,23 @@ try {
                 
                 # Get job status
                 $jobStatusUri = "$uriOrch/odata/Jobs(`$filter=Id eq $startedJobId)"
-                # Note: For Modern Folders, many APIs need the X-UIPATH-OrganizationUnitId header.
-                $jobResponse = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
+                WriteLog "Polling job status URI: $jobStatusUri"
+                WriteLog "Polling job status Headers: $(ConvertTo-Json $headers)"
+                try {
+                    $jobResponse = Invoke-RestMethod -Uri $jobStatusUri -Method Get -Headers $headers -ErrorAction Stop
+                } catch {
+                    WriteLog "Error during job status polling: $($_.Exception.Message)" -err
+                    if ($_.Exception.Response) {
+                        $errorResponse = $_.Exception.Response.GetResponseStream()
+                        $reader = New-Object System.IO.StreamReader($errorResponse)
+                        $responseBody = $reader.ReadToEnd()
+                        WriteLog "Full error response body from job status polling: $responseBody" -err
+                    }
+                    WriteLog "Exiting polling loop due to error."
+                    $jobStatus = "ErrorPolling" # Set to a non-terminal status to exit loop
+                    break
+                }
+                
 
                 if ($jobResponse.value -and $jobResponse.value.Count -gt 0) {
                     $jobStatus = $jobResponse.value[0].State
@@ -254,16 +298,13 @@ try {
 
             if ($jobStatus -eq "Successful") {
                 WriteLog "Job completed successfully."
-                # Output result_path if needed. The API response for a single job might contain results.
                 if ($result_path -ne "") {
-                    # This would involve parsing the API response for results, which varies by how your process returns them.
-                    # For a simple job, the last response of the job state check can be written to a file.
                     $jobResponse.value[0] | ConvertTo-Json -Depth 10 | Set-Content $result_path
                     WriteLog "Job final status written to $result_path"
                 }
                 exit 0
-            } elseif ($fail_when_job_fails -eq "true") {
-                WriteLog "Job failed or stopped, and 'fail_when_job_fails' is true. Exiting with error." -err
+            } elseif ($fail_when_job_fails -eq "true" -and ($jobStatus -eq "Failed" -or $jobStatus -eq "Stopped" -or $jobStatus -eq "Faulted" -or $jobStatus -eq "ErrorPolling")) {
+                WriteLog "Job failed, stopped, faulted, or encountered polling error, and 'fail_when_job_fails' is true. Exiting with error." -err
                 exit 1
             } else {
                 WriteLog "Job failed or stopped, but 'fail_when_job_fails' is false. Exiting gracefully."
