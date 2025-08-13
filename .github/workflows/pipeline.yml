@@ -297,11 +297,12 @@ jobs:
                 Write-Host "Found BRANCH: '$value'"
                 echo "BRANCH=$value" >> $env:GITHUB_ENV 
               }
-              if ($line -match '^[ ]*UIPATH_CLI_PATH[ ]*-[ ]*(.+)$') { 
-                $value = $Matches[1].Trim()
-                Write-Host "Found UIPATH_CLI_PATH: '$value'"
-                echo "UIPATH_CLI_PATH=$value" >> $env:GITHUB_ENV 
-              }
+              # REMOVED: No longer load UIPATH_CLI_PATH as it's not used by the script
+              # if ($line -match '^[ ]*UIPATH_CLI_PATH[ ]*-[ ]*(.+)$') { 
+              #   $value = $Matches[1].Trim()
+              #   Write-Host "Found UIPATH_CLI_PATH: '$value'"
+              #   echo "UIPATH_CLI_PATH=$value" >> $env:GITHUB_ENV 
+              # }
               if ($line -match '^[ ]*FOLDER_ORGANIZATION_UNIT[ ]*-[ ]*(.+)$') { 
                 $value = $Matches[1].Trim()
                 Write-Host "Found FOLDER_ORGANIZATION_UNIT: '$value'"
@@ -333,7 +334,8 @@ jobs:
           shell: pwsh
           run: |
             Write-Host "Loaded configuration values:"
-            Get-ChildItem Env: | Where-Object { $_.Name -in @('PROJECT_NAME','BRANCH','UIPATH_CLI_PATH','FOLDER_ORG_UNIT','FOLDER_DEPLOY_UNIT','MACHINE','ROBOT','TIMEOUT_SEC') } | ForEach-Object { Write-Host "  $($_.Name)=$($_.Value)" }
+            # Adjusted to not print UIPATH_CLI_PATH if it's no longer loaded
+            Get-ChildItem Env: | Where-Object { $_.Name -in @('PROJECT_NAME','BRANCH','FOLDER_ORG_UNIT','FOLDER_DEPLOY_UNIT','MACHINE','ROBOT','TIMEOUT_SEC') } | ForEach-Object { Write-Host "  $($_.Name)=$($_.Value)" }
         
         - name: run Package
           shell: powershell
@@ -369,7 +371,7 @@ jobs:
             Write-Host "  Folder: ${{ env.FOLDER_ORG_UNIT }}"
             Write-Host "  Machine: ${{ env.MACHINE }}"
             Write-Host "  Robot: ${{ env.ROBOT }}"
-            Write-Host "  CLI Path: ${{ env.UIPATH_CLI_PATH }}"
+            Write-Host "  # Removed CLI Path from here as it's not a parameter for UiPathJobRun.ps1"
             Write-Host "  Timeout: ${{ env.TIMEOUT_SEC }}"
             
             # DEBUG: Print the exact parameters that will be passed to the script
@@ -384,7 +386,7 @@ jobs:
             Write-Host "folder_organization_unit: '${{ env.FOLDER_ORG_UNIT }}'"
             Write-Host "machine: '${{ env.MACHINE }}'"
             Write-Host "robots: '${{ env.ROBOT }}'"
-            Write-Host "uipathCliFilePath: '${{ env.UIPATH_CLI_PATH }}'"
+            Write-Host "uipathCliFilePath: 'REMOVED from script call'" # Update debug message
             Write-Host "timeout: '${{ env.TIMEOUT_SEC }}'"
             Write-Host "======================================"
             
@@ -400,5 +402,4 @@ jobs:
               -folder_organization_unit "${{ env.FOLDER_ORG_UNIT }}" `
               -machine "${{ env.MACHINE }}" `
               -robots "${{ env.ROBOT }}" `
-              -uipathCliFilePath "${{ env.UIPATH_CLI_PATH }}" `
-              -timeout "${{ env.TIMEOUT_SEC }}"
+              -timeout "${{ env.TIMEOUT_SEC }}" # Removed -uipathCliFilePath parameter
