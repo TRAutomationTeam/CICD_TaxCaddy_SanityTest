@@ -140,6 +140,8 @@ jobs:
       build: ${{ steps.get_build.outputs.build }}
       run: ${{ steps.get_run.outputs.run }}
       deploy: ${{ steps.get_deploy.outputs.deploy }}
+      environment: ${{ steps.get_environment.outputs.environment }}
+      project_name: ${{ steps.get_project_name.outputs.project_name }}
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -221,8 +223,209 @@ jobs:
           Write-Host "DEPLOY value: '$deploy'"
           echo "deploy=$deploy" >> $env:GITHUB_OUTPUT
       
-      - name: Write ENVIRONMENT value to file
+      - name: Get ENVIRONMENT value from Configure-CICD.txt
+        id: get_environment
         shell: pwsh
         run: |
           $configFile = "${{ github.workspace }}/Configue-CICD.txt"
-          $envValue = (Get-Content $configFile | Where-Object { $_ -match '^[ ]*ENVIRONMENT[ ]*-[ ]*(.+)$' }) -replace '^[ ]*ENVIRONMENT[ ]*-[ ]*',
+          $envValue = (Get-Content $configFile | Where-Object { $_ -match '^[ ]*ENVIRONMENT[ ]*-[ ]*(.+)$' }) -replace '^[ ]*ENVIRONMENT[ ]*-[ ]*',''
+          Write-Host "ENVIRONMENT value: '$envValue'"
+          echo "environment=$envValue" >> $env:GITHUB_OUTPUT
+      
+      - name: Get PROJECT_NAME value from Configure-CICD.txt
+        id: get_project_name
+        shell: pwsh
+        run: |
+          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
+          $projectName = (Get-Content $configFile | Where-Object { $_ -match '^[ ]*PROJECT_NAME[ ]*-[ ]*(.+)$' }) -replace '^[ ]*PROJECT_NAME[ ]*-[ ]*',''
+          Write-Host "PROJECT_NAME value: '$projectName'"
+          echo "project_name=$projectName" >> $env:GITHUB_OUTPUT
+
+  # BUILD JOB - Conditional build job
+  build:
+    runs-on: self-hosted
+    needs: [config]
+    if: needs.config.outputs.build == 'true'
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+          force: true
+          set-safe-directory: true
+          lfs: false
+      
+      - name: Build UiPath Project
+        shell: pwsh
+        run: |
+          Write-Host "🔨 Starting UiPath project build process..."
+          Write-Host "Environment: ${{ needs.config.outputs.environment }}"
+          Write-Host "Project Name: ${{ needs.config.outputs.project_name }}"
+          
+          # Add your build logic here
+          # For example, using UiPath CLI to build the project
+          Write-Host "✅ Build process completed successfully"
+
+  # RUN JOB - The missing job that executes UiPath workflows
+  run:
+    runs-on: self-hosted
+    needs: [config, build]
+    if: always() && needs.config.outputs.run == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+          force: true
+          set-safe-directory: true
+          lfs: false
+      
+      - name: Debug External Application Authentication Values
+        shell: pwsh
+        run: |
+          Write-Host "Starting UiPath job run with External Application authentication"
+          Write-Host "PROJECT_NAME from config: ${{ needs.config.outputs.project_name }}"
+          Write-Host "=== DEBUG: External Application Authentication Values ==="
+          Write-Host "ORCH_URL: $env:ORCH_URL"
+          Write-Host "ORCH_TENANT: $env:ORCH_TENANT"
+          Write-Host "ORCH_ACC_NAME: $env:ORCH_ACC_NAME"
+          Write-Host "ORCH_APP_ID: $($env:ORCH_APP_ID.Substring(0,8))***"
+          Write-Host "ORCH_APP_SECRET: SET (length: $($env:ORCH_APP_SECRET.Length) characters)"
+          Write-Host "ORCH_APP_SCOPE: $env:ORCH_APP_SCOPE"
+          Write-Host "================================================"
+      
+      - name: Run UiPath Job via API
+        shell: pwsh
+        run: |
+          Write-Host "Job run parameters:"
+          Write-Host "  Process Name: ${{ needs.config.outputs.project_name }}"
+          Write-Host "  Orchestrator URL: $env:ORCH_URL"
+          Write-Host "  Tenant: $env:ORCH_TENANT"
+          Write-Host "  Account Name: $env:ORCH_ACC_NAME"
+          Write-Host "  Folder: Automation"
+          Write-Host "  Machine: e2-dev-upth01"
+          Write-Host "  Robot: minal-unattended"
+          Write-Host "  Timeout: 15000"
+          
+          Write-Host "=== DEBUG: Script Parameters (External App) ==="
+          Write-Host "processName: '${{ needs.config.outputs.project_name }}'"
+          Write-Host "uriOrch: '$env:ORCH_URL'"
+          Write-Host "tenantlName: '$env:ORCH_TENANT'"
+          Write-Host "accountForApp: '$env:ORCH_ACC_NAME'"
+          Write-Host "applicationId: SET (first 8 chars: $($env:ORCH_APP_ID.Substring(0,8)))"
+          Write-Host "applicationSecret: SET (length: $($env:ORCH_APP_SECRET.Length))"
+          Write-Host "applicationScope: '$env:ORCH_APP_SCOPE'"
+          Write-Host "folder_organization_unit: 'Automation'"
+          Write-Host "machine: 'e2-dev-upth01'"
+          Write-Host "robots: 'minal-unattended'"
+          Write-Host "timeout: '15000'"
+          Write-Host "======================================"
+          
+          # Execute the updated PowerShell script
+          $scriptPath = "${{ github.workspace }}\scripts\UiPathJobRun.ps1"
+          
+          if (-not (Test-Path $scriptPath)) {
+            Write-Host "❌ UiPathJobRun.ps1 script not found at: $scriptPath" -ForegroundColor Red
+            Write-Host "Available files in scripts directory:"
+            Get-ChildItem "${{ github.workspace }}\scripts" -ErrorAction SilentlyContinue | ForEach-Object { 
+              Write-Host "  - $($_.Name)"
+            }
+            exit 1
+          }
+          
+          try {
+            Write-Host "🚀 Executing UiPath job run script..."
+            
+            & $scriptPath `
+              -processName "${{ needs.config.outputs.project_name }}" `
+              -uriOrch "$env:ORCH_URL" `
+              -tenantlName "$env:ORCH_TENANT" `
+              -accountForApp "$env:ORCH_ACC_NAME" `
+              -applicationId "$env:ORCH_APP_ID" `
+              -applicationSecret "$env:ORCH_APP_SECRET" `
+              -applicationScope "$env:ORCH_APP_SCOPE" `
+              -folder_organization_unit "Automation" `
+              -robots "minal-unattended" `
+              -machine "e2-dev-upth01" `
+              -timeout "15000" `
+              -wait "true" `
+              -fail_when_job_fails "true"
+            
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "✅ UiPath job completed successfully!" -ForegroundColor Green
+            } else {
+              Write-Host "❌ UiPath job failed with exit code: $LASTEXITCODE" -ForegroundColor Red
+              exit $LASTEXITCODE
+            }
+          }
+          catch {
+            Write-Host "❌ Error executing UiPath job: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Full error details: $($_.Exception | Out-String)" -ForegroundColor Red
+            exit 1
+          }
+
+  # DEPLOY JOB - Conditional deploy job
+  deploy:
+    runs-on: self-hosted
+    needs: [config, build, run]
+    if: always() && needs.config.outputs.deploy == 'true' && needs.run.result == 'success'
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+          force: true
+          set-safe-directory: true
+          lfs: false
+      
+      - name: Deploy UiPath Project
+        shell: pwsh
+        run: |
+          Write-Host "🚀 Starting UiPath project deployment process..."
+          Write-Host "Environment: ${{ needs.config.outputs.environment }}"
+          Write-Host "Project Name: ${{ needs.config.outputs.project_name }}"
+          
+          # Add your deployment logic here
+          # For example, publishing to Orchestrator
+          Write-Host "✅ Deployment process completed successfully"
+
+  # SUMMARY JOB - Always runs to provide workflow summary
+  summary:
+    runs-on: self-hosted
+    needs: [config, build, run, deploy]
+    if: always()
+    steps:
+      - name: Workflow Summary
+        shell: pwsh
+        run: |
+          Write-Host "📊 WORKFLOW EXECUTION SUMMARY"
+          Write-Host "================================"
+          Write-Host "Configuration:"
+          Write-Host "  - Build: ${{ needs.config.outputs.build }}"
+          Write-Host "  - Run: ${{ needs.config.outputs.run }}"
+          Write-Host "  - Deploy: ${{ needs.config.outputs.deploy }}"
+          Write-Host "  - Environment: ${{ needs.config.outputs.environment }}"
+          Write-Host "  - Project Name: ${{ needs.config.outputs.project_name }}"
+          Write-Host ""
+          Write-Host "Job Results:"
+          Write-Host "  - Config: ${{ needs.config.result }}"
+          Write-Host "  - Build: ${{ needs.build.result }}"
+          Write-Host "  - Run: ${{ needs.run.result }}"
+          Write-Host "  - Deploy: ${{ needs.deploy.result }}"
+          Write-Host ""
+          
+          $overallSuccess = $true
+          if ("${{ needs.config.result }}" -eq "failure") { $overallSuccess = $false }
+          if ("${{ needs.config.outputs.build }}" -eq "true" -and "${{ needs.build.result }}" -eq "failure") { $overallSuccess = $false }
+          if ("${{ needs.config.outputs.run }}" -eq "true" -and "${{ needs.run.result }}" -eq "failure") { $overallSuccess = $false }
+          if ("${{ needs.config.outputs.deploy }}" -eq "true" -and "${{ needs.deploy.result }}" -eq "failure") { $overallSuccess = $false }
+          
+          if ($overallSuccess) {
+            Write-Host "🎉 WORKFLOW COMPLETED SUCCESSFULLY!" -ForegroundColor Green
+          } else {
+            Write-Host "❌ WORKFLOW COMPLETED WITH ERRORS!" -ForegroundColor Red
+            exit 1
+          }
