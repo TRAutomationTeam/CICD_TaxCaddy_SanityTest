@@ -68,6 +68,7 @@ jobs:
       environment: ${{ steps.get_environment.outputs.environment }}
       project_name: ${{ steps.get_project_name.outputs.project_name }}
       robot: ${{ steps.get_robot.outputs.robot }}
+      machine: ${{ steps.get_machine.outputs.machine }}
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
@@ -157,6 +158,16 @@ jobs:
           Write-Host "ROBOT value: '$robot'"
           echo "robot=$robot" >> $env:GITHUB_OUTPUT
 
+      - name: Get MACHINE value from Configure-CICD.txt
+        id: get_machine
+        shell: pwsh
+        run: |
+          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
+          $machine = (Get-Content $configFile | Where-Object { $_ -match '^[ ]*MACHINE[ ]*-[ ]*(.+)$' }) -replace '^[ ]*MACHINE[ ]*-[ ]*',''
+          $machine = $machine.Trim()
+          Write-Host "MACHINE value: '$machine'"
+          echo "machine=$machine" >> $env:GITHUB_OUTPUT
+
   debug:
     runs-on: self-hosted
     needs: [config]
@@ -172,6 +183,7 @@ jobs:
           Write-Host "config.outputs.environment: '${{ needs.config.outputs.environment }}'"
           Write-Host "config.outputs.project_name: '${{ needs.config.outputs.project_name }}'"
           Write-Host "config.outputs.robot: '${{ needs.config.outputs.robot }}'"
+          Write-Host "config.outputs.machine: '${{ needs.config.outputs.machine }}'"
           Write-Host "===================="
           
           Write-Host "=== CONDITION EVALUATION ==="
@@ -202,6 +214,7 @@ jobs:
           Write-Host "Starting UiPath job run with External Application authentication"
           Write-Host "PROJECT_NAME from config: ${{ needs.config.outputs.project_name }}"
           Write-Host "ROBOT from config: ${{ needs.config.outputs.robot }}"
+          Write-Host "MACHINE from config: ${{ needs.config.outputs.machine }}"
           Write-Host "=== DEBUG: External Application Authentication Values ==="
           Write-Host "ORCH_URL: $env:ORCH_URL"
           Write-Host "ORCH_TENANT: $env:ORCH_TENANT"
@@ -224,7 +237,7 @@ jobs:
           Write-Host "  Tenant: $env:ORCH_TENANT"
           Write-Host "  Account Name: $env:ORCH_ACC_NAME"
           Write-Host "  Folder: Automation"
-          Write-Host "  Machine: e2-dev-upth01"
+          Write-Host "  Machine: ${{ needs.config.outputs.machine }}"
           Write-Host "  Robot: ${{ needs.config.outputs.robot }}"
           Write-Host "  Timeout: 15000"
           
@@ -252,7 +265,7 @@ jobs:
               -applicationScope "$env:ORCH_APP_SCOPE" `
               -folder_organization_unit "Automation" `
               -robots "${{ needs.config.outputs.robot }}" `
-              -machine "e2-dev-upth01" `
+              -machine "${{ needs.config.outputs.machine }}" `
               -timeout "15000" `
               -wait "true" `
               -fail_when_job_fails "true"
