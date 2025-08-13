@@ -69,9 +69,23 @@ WriteLog "Starting UiPath Orchestrator Job via API..."
 
 # Define the base URL for Orchestrator OData API calls
 # This correctly appends /orchestrator_ for Cloud Orchestrator API endpoints
-# This variable needs to be defined AFTER $uriOrch is available (i.e., not in a function or param block)
 $orchestratorApiBase = "$uriOrch/orchestrator_"
 WriteLog "Orchestrator API Base for OData calls: $orchestratorApiBase"
+
+# Determine the Identity Server Base URL from $uriOrch
+# For UiPath Cloud, the Identity Server URL is typically the root domain.
+# Example: if $uriOrch is "https://cloud.uipath.com/myaccount/mytenant",
+# then $identityServerRoot should be "https://cloud.uipath.com"
+$identityServerRoot = ""
+if ($uriOrch -match "^(https?:\/\/[^\/]+)\/") {
+    # Extract the base URL (e.g., https://cloud.uipath.com)
+    $identityServerRoot = $Matches[1]
+} else {
+    # Fallback if regex doesn't match expected pattern (e.g., if $uriOrch is just a domain)
+    # This might happen for on-prem if uriOrch is already the root Identity URL
+    $identityServerRoot = $uriOrch
+}
+WriteLog "Determined Identity Server Root URL for token acquisition: $identityServerRoot"
 
 
 # --- 1. Get Access Token from External Application Credentials ---
@@ -81,10 +95,11 @@ Function Get-OrchestratorAccessToken {
         [string]$applicationId,
         [string]$applicationSecret,
         [string]$applicationScope,
-        [string]$identityBaseUrl # Renamed parameter for clarity: this is the base for /identity_
+        [string]$identityBaseUrl # This parameter now correctly expects the root Identity URL
     )
     WriteLog "Attempting to get access token for external application..."
     
+    # This line is now correct as $identityBaseUrl should hold the correct root domain
     $identityUrl = "$($identityBaseUrl)/identity_/connect/token" 
     WriteLog "Identity URL for token: $identityUrl"
 
@@ -122,9 +137,13 @@ Function Get-OrchestratorAccessToken {
     }
 }
 
-# IMPORTANT: Pass $uriOrch (which now holds 'https://cloud.uipath.com/surepymsxjta/DefaultTenant')
-# to the identityBaseUrl parameter of the function.
-$accessToken = Get-OrchestratorAccessToken -accountName $accountForApp -applicationId $applicationId -applicationSecret $applicationSecret -applicationScope $applicationScope -identityBaseUrl $uriOrch
+# IMPORTANT CHANGE: Pass the newly derived $identityServerRoot to the function
+$accessToken = Get-OrchestratorAccessToken `
+    -accountName $accountForApp `
+    -applicationId $applicationId `
+    -applicationSecret $applicationSecret `
+    -applicationScope $applicationScope `
+    -identityBaseUrl $identityServerRoot 
 
 $headers = @{
     "Authorization" = "Bearer $accessToken"
@@ -138,8 +157,7 @@ WriteLog "Initial headers set: $(ConvertTo-Json $headers)"
 
 Function Resolve-OrchestratorId {
     Param (
-        [string]$orchestratorUrl, # This parameter is no longer directly used to construct the URI inside this function.
-                                  # It's passed from the main script ($uriOrch) but we now use $orchestratorApiBase.
+        # Removed $orchestratorUrl from here as it's not directly used to construct the URI inside this function.
         [hashtable]$headers,
         [string]$endpoint, # e.g., "Folders", "Processes", "Robots", "Machines"
         [string]$nameToResolve,
@@ -147,7 +165,7 @@ Function Resolve-OrchestratorId {
         [string]$idProperty # e.g., "Id", "Key"
     )
     WriteLog "Resolving $endpoint '$nameToResolve'..."
-    # IMPORTANT CHANGE HERE: Use $orchestratorApiBase for all OData calls
+    # IMPORTANT: Use $orchestratorApiBase for all OData calls
     $uri = "$orchestratorApiBase/odata/$endpoint`$filter=($filterProperty eq '$nameToResolve')"
     WriteLog "Resolution URI: $uri"
     WriteLog "Resolution Headers: $(ConvertTo-Json $headers)"
@@ -176,8 +194,9 @@ Function Resolve-OrchestratorId {
     }
 }
 
-$folderId = Resolve-OrchestratorId -orchestratorUrl $uriOrch -headers $headers -endpoint "Folders" -nameToResolve $folder_organization_unit -filterProperty "DisplayName" -idProperty "Id"
-$processKey = Resolve-OrchestratorId -orchestratorUrl $uriOrch -headers $headers -endpoint "Processes" -nameToResolve $processName -filterProperty "ProcessKey" -idProperty "Key"
+# The -orchestratorUrl parameter is no longer necessary for Resolve-OrchestratorId because it now uses the global $orchestratorApiBase
+$folderId = Resolve-OrchestratorId -headers $headers -endpoint "Folders" -nameToResolve $folder_organization_unit -filterProperty "DisplayName" -idProperty "Id"
+$processKey = Resolve-OrchestratorId -headers $headers -endpoint "Processes" -nameToResolve $processName -filterProperty "ProcessKey" -idProperty "Key"
 
 # Robot/Machine ID resolution is more complex based on how you specify robots/machines
 $targetRobotIds = @()
@@ -185,7 +204,7 @@ if ($robots -ne "") {
     $robotNames = $robots.Split(',') | ForEach-Object { $_.Trim() }
     WriteLog "Resolving Robot IDs for names: $robots"
     foreach ($robotName in $robotNames) {
-        $robotId = Resolve-OrchestratorId -orchestratorUrl $uriOrch -headers $headers -endpoint "Robots" -nameToResolve $robotName -filterProperty "Name" -idProperty "Id"
+        $robotId = Resolve-OrchestratorId -headers $headers -endpoint "Robots" -nameToResolve $robotName -filterProperty "Name" -idProperty "Id"
         if ($robotId) { $targetRobotIds += $robotId }
     }
     if ($targetRobotIds.Count -eq 0) {
