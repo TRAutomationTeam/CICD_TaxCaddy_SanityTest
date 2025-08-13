@@ -7,22 +7,26 @@ on:
     paths:
       - 'Configue-CICD.txt'
 
+# Here the environment variable is declared in workflow levels 
 env: 
+  # Replace with your Orchestrator Values 
   PROJECT_FOLDER: ${{ github.action_path }}
   ORCH_URL: ${{ secrets.UIPATH_ORCH_URL }}
   ORCH_TENANT: ${{ secrets.UIPATH_TENANT_ID }}
   ORCH_CLIENT_ID: ${{ secrets.UIPATH_CLIENT_ID }}
   ORCH_USER_KEY: ${{ secrets.UIPATH_USER_KEY }}
   ORCH_ACC_NAME: ${{ secrets.UIPATH_ACCOUNT_ID }}
+  # Add these new environment variables for external app authentication
+  ORCH_APP_ID: ${{ secrets.UIPATH_APP_ID }}
+  ORCH_APP_SECRET: ${{ secrets.UIPATH_APP_SECRET }}
+  ORCH_APP_SCOPE: ${{ secrets.UIPATH_APP_SCOPE }}
 
 jobs:
   print-details:
     runs-on: self-hosted
     steps:
       - name: echo-default-env-variables
-        shell: pwsh
         run: |
-          Write-Host "=== ENVIRONMENT VARIABLES ===" -ForegroundColor Yellow
           Write-Host "Home: $env:HOME"
           Write-Host "GITHUB_WORKFLOW: $env:GITHUB_WORKFLOW"
           Write-Host "GITHUB_ACTIONS: $env:GITHUB_ACTIONS"
@@ -32,256 +36,82 @@ jobs:
           Write-Host "GITHUB_WORKSPACE: $env:GITHUB_WORKSPACE"
           Write-Host "GITHUB_SHA: $env:GITHUB_SHA"
           Write-Host "GITHUB_REF: $env:GITHUB_REF"
-
+          
   cleaner:
     runs-on: self-hosted
     steps:
-      - name: Force clean workspace with enhanced permissions
+      - name: Runner workspace path
         shell: pwsh
         run: |
-          Write-Host "=== ENHANCED WORKSPACE CLEANING ===" -ForegroundColor Yellow
-          $workspace = "${{ github.workspace }}"
-          Write-Host "Target workspace: $workspace" -ForegroundColor Cyan
-          
-          if (Test-Path $workspace) {
-            Write-Host "Workspace exists, performing deep clean..." -ForegroundColor Yellow
-            
-            try {
-              Get-ChildItem -Path $workspace -Force -Recurse -ErrorAction SilentlyContinue | 
-                ForEach-Object { 
-                  try {
-                    $_.Delete()
-                  } catch {
-                    Write-Host "Could not delete: $($_.FullName)" -ForegroundColor Red
-                  }
-                }
-              
-              Get-ChildItem -Path $workspace -Directory -Force -ErrorAction SilentlyContinue | 
-                Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-                
-              Get-ChildItem -Path $workspace -File -Force -ErrorAction SilentlyContinue | 
-                Remove-Item -Force -ErrorAction SilentlyContinue
-                
-            } catch {
-              Write-Host "PowerShell cleanup failed: $_" -ForegroundColor Red
-            }
-            
-            if ($IsWindows -or $env:OS -eq "Windows_NT") {
-              Write-Host "Using CMD for Windows cleanup..." -ForegroundColor Yellow
-              try {
-                cmd /c "rmdir /s /q `"$workspace`" 2>nul"
-                cmd /c "del /f /s /q `"$workspace\*.*`" 2>nul"
-              } catch {
-                Write-Host "CMD cleanup had issues: $_" -ForegroundColor Red
-              }
-            }
-            
-            if (-not (Test-Path $workspace)) {
-              New-Item -ItemType Directory -Path $workspace -Force | Out-Null
-              Write-Host "Created fresh workspace directory" -ForegroundColor Green
-            }
-            
-          } else {
-            Write-Host "Workspace doesn't exist, creating..." -ForegroundColor Green
-            New-Item -ItemType Directory -Path $workspace -Force | Out-Null
-          }
-          
-      - name: Verify complete cleanup
-        shell: pwsh
-        run: |
-          Write-Host "=== CLEANUP VERIFICATION ===" -ForegroundColor Yellow
-          $workspace = "${{ github.workspace }}"
-          
-          if (Test-Path $workspace) {
-            $items = @(Get-ChildItem -Path $workspace -Force -Recurse -ErrorAction SilentlyContinue)
-            if ($items.Count -eq 0) {
-              Write-Host "✅ Workspace is completely clean" -ForegroundColor Green
-            } else {
-              Write-Host "⚠️ $($items.Count) items still present:" -ForegroundColor Yellow
-              $items | ForEach-Object { Write-Host "  $($_.FullName)" -ForegroundColor Red }
-            }
-          } else {
-            Write-Host "✅ Workspace directory ready" -ForegroundColor Green
-          }
+          echo "Cleaning up previous run"
+          Remove-Item -Path "${{ github.workspace }}" -Recurse -Force -ErrorAction SilentlyContinue
 
   config:
-    needs: [cleaner]
     runs-on: self-hosted
     outputs:
       build: ${{ steps.get_build.outputs.build }}
       run: ${{ steps.get_run.outputs.run }}
       deploy: ${{ steps.get_deploy.outputs.deploy }}
-      cli_path: ${{ steps.get_cli_path.outputs.cli_path }}
-      project_name: ${{ steps.get_project_name.outputs.project_name }}
-      folder_org_unit: ${{ steps.get_folder_org_unit.outputs.folder_org_unit }}
-      folder_deploy_unit: ${{ steps.get_folder_deploy_unit.outputs.folder_deploy_unit }}
-      machine: ${{ steps.get_machine.outputs.machine }}
-      robot: ${{ steps.get_robot.outputs.robot }}
-      timeout_sec: ${{ steps.get_timeout_sec.outputs.timeout_sec }}
     steps:
-      - name: Force fresh repository checkout
+      - name: Check out repository code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          force: true
-          submodules: false
-          token: ${{ github.token }}
-          
-      - name: Post-checkout cleanup verification
+      - name: Get BUILD value from Configure-CICD.txt
+        id: get_build
         shell: pwsh
         run: |
-          Write-Host "=== POST-CHECKOUT VERIFICATION ===" -ForegroundColor Yellow
-          $workspace = "${{ github.workspace }}"
-          
-          $gitLockFiles = @(
-            "$workspace\.git\index.lock",
-            "$workspace\.git\HEAD.lock",
-            "$workspace\.git\config.lock"
-          )
-          
-          foreach ($lockFile in $gitLockFiles) {
-            if (Test-Path $lockFile) {
-              Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
-              Write-Host "Removed Git lock: $lockFile" -ForegroundColor Yellow
-            }
-          }
-          
-          $criticalFiles = @("Configue-CICD.txt", "project.json")
-          foreach ($file in $criticalFiles) {
-            $fullPath = Join-Path $workspace $file
-            if (Test-Path $fullPath) {
-              $lastWrite = (Get-Item $fullPath).LastWriteTime
-              Write-Host "✅ $file (Modified: $lastWrite)" -ForegroundColor Green
-            } else {
-              Write-Host "❌ Missing: $file" -ForegroundColor Red
-            }
-          }
-          
-          Write-Host "`n📁 Repository Contents:" -ForegroundColor Cyan
-          Get-ChildItem -Path $workspace -Force | ForEach-Object {
-            $type = if ($_.PSIsContainer) { "📁" } else { "📄" }
-            Write-Host "  $type $($_.Name) (Modified: $($_.LastWriteTime))" -ForegroundColor White
-          }
-
-      - name: Load all configuration values
+          $build = (Get-Content "${{ github.workspace }}/Configue-CICD.txt" | Where-Object { $_ -match '^BUILD[ ]*-[ ]*(.+)$' }) -replace '^BUILD[ ]*-[ ]*',''
+          echo "build=$build" >> $env:GITHUB_OUTPUT
+      - name: Get RUN value from Configure-CICD.txt
+        id: get_run
         shell: pwsh
         run: |
-          $configFile = "${{ github.workspace }}/Configue-CICD.txt"
-          if (-not (Test-Path $configFile)) {
-            Write-Error "❌ Configuration file not found: $configFile"
-            exit 1
-          }
-          
-          Write-Host "📖 Loading all configuration values..." -ForegroundColor Cyan
-          $config = Get-Content $configFile
-          
-          # Parse and set all configuration values
-          foreach ($line in $config) {
-            if ($line -match '^[ ]*BUILD[ ]*-[ ]*(.+)$') { 
-              echo "BUILD_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*RUN[ ]*-[ ]*(.+)$') { 
-              echo "RUN_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*DEPLOY[ ]*-[ ]*(.+)$') { 
-              echo "DEPLOY_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*PROJECT_NAME[ ]*-[ ]*(.+)$') { 
-              echo "PROJECT_NAME_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*UIPATH_CLI_PATH[ ]*-[ ]*(.+)$') { 
-              echo "CLI_PATH_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*FOLDER_ORGANIZATION_UNIT[ ]*-[ ]*(.+)$') { 
-              echo "FOLDER_ORG_UNIT_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*FOLDER_DEPLOY_UNIT[ ]*-[ ]*(.+)$') { 
-              echo "FOLDER_DEPLOY_UNIT_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*MACHINE[ ]*-[ ]*(.+)$') { 
-              echo "MACHINE_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*ROBOT[ ]*-[ ]*(.+)$') { 
-              echo "ROBOT_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*TIMEOUT_SEC[ ]*-[ ]*(.+)$') { 
-              echo "TIMEOUT_SEC_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-            if ($line -match '^[ ]*ENVIRONMENT[ ]*-[ ]*(.+)$') { 
-              echo "ENVIRONMENT_VALUE=$($Matches[1].Trim())" >> $env:GITHUB_ENV 
-            }
-          }
-
-      - name: Set job outputs
-        id: set_outputs
+          $run = (Get-Content "${{ github.workspace }}/Configue-CICD.txt" | Where-Object { $_ -match '^RUN[ ]*-[ ]*(.+)$' }) -replace '^RUN[ ]*-[ ]*',''
+          echo "run=$run" >> $env:GITHUB_OUTPUT
+      - name: Get DEPLOY value from Configure-CICD.txt
+        id: get_deploy
         shell: pwsh
         run: |
-          echo "build=$env:BUILD_VALUE" >> $env:GITHUB_OUTPUT
-          echo "run=$env:RUN_VALUE" >> $env:GITHUB_OUTPUT  
-          echo "deploy=$env:DEPLOY_VALUE" >> $env:GITHUB_OUTPUT
-          echo "cli_path=$env:CLI_PATH_VALUE" >> $env:GITHUB_OUTPUT
-          echo "project_name=$env:PROJECT_NAME_VALUE" >> $env:GITHUB_OUTPUT
-          echo "folder_org_unit=$env:FOLDER_ORG_UNIT_VALUE" >> $env:GITHUB_OUTPUT
-          echo "folder_deploy_unit=$env:FOLDER_DEPLOY_UNIT_VALUE" >> $env:GITHUB_OUTPUT
-          echo "machine=$env:MACHINE_VALUE" >> $env:GITHUB_OUTPUT
-          echo "robot=$env:ROBOT_VALUE" >> $env:GITHUB_OUTPUT
-          echo "timeout_sec=$env:TIMEOUT_SEC_VALUE" >> $env:GITHUB_OUTPUT
-          
-          Write-Host "Configuration loaded successfully:" -ForegroundColor Green
-          Write-Host "  BUILD: $env:BUILD_VALUE" -ForegroundColor Cyan
-          Write-Host "  RUN: $env:RUN_VALUE" -ForegroundColor Cyan
-          Write-Host "  DEPLOY: $env:DEPLOY_VALUE" -ForegroundColor Cyan
-          Write-Host "  PROJECT_NAME: $env:PROJECT_NAME_VALUE" -ForegroundColor Cyan
-          Write-Host "  CLI_PATH: $env:CLI_PATH_VALUE" -ForegroundColor Cyan
-
+          $deploy = (Get-Content "${{ github.workspace }}/Configue-CICD.txt" | Where-Object { $_ -match '^DEPLOY[ ]*-[ ]*(.+)$' }) -replace '^DEPLOY[ ]*-[ ]*',''
+          echo "deploy=$deploy" >> $env:GITHUB_OUTPUT
       - name: Write ENVIRONMENT value to file
         shell: pwsh
         run: |
-          Write-Host "ENVIRONMENT value: '$env:ENVIRONMENT_VALUE'" -ForegroundColor Green
-          
+          $envValue = (Get-Content "${{ github.workspace }}/Configue-CICD.txt" | Where-Object { $_ -match '^[ ]*ENVIRONMENT[ ]*-[ ]*(.+)$' }) -replace '^[ ]*ENVIRONMENT[ ]*-[ ]*',''
           $outputPath = 'C:\Automation Team\CICD'
           if (!(Test-Path $outputPath)) { New-Item -Path $outputPath -ItemType Directory -Force }
           $envFile = Join-Path $outputPath 'environment.txt'
           Remove-Item -Path $envFile -Force -ErrorAction SilentlyContinue
-          Set-Content -Path $envFile -Value $env:ENVIRONMENT_VALUE
-          Write-Host "Environment written to: $envFile" -ForegroundColor Green
+          Set-Content -Path $envFile -Value $envValue
 
   build-uipath-nuget-package:
-    needs: [config]
+    needs: [cleaner, config]
     if: needs.config.outputs.build == 'Yes'
     runs-on: self-hosted
     steps: 
-      - name: Force fresh repository checkout for build
+      - name: Check out repository code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          force: true
-          submodules: false
-          token: ${{ github.token }}
-          
-      - name: Verify build files are current
+      - name: Load config values from Configue-CICD.txt
+        id: load_config
         shell: pwsh
         run: |
-          Write-Host "=== BUILD FILES VERIFICATION ===" -ForegroundColor Yellow
-          
-          $buildFiles = @("project.json", "scripts/UiPathPack.ps1", "Configue-CICD.txt")
-          foreach ($file in $buildFiles) {
-            $fullPath = Join-Path "${{ github.workspace }}" $file
-            if (Test-Path $fullPath) {
-              $lastWrite = (Get-Item $fullPath).LastWriteTime
-              $size = (Get-Item $fullPath).Length
-              Write-Host "✅ $file (Modified: $lastWrite, Size: $size bytes)" -ForegroundColor Green
-            } else {
-              Write-Host "❌ Missing build file: $file" -ForegroundColor Red
-            }
+          $config = Get-Content "${{ github.workspace }}\Configue-CICD.txt"
+          foreach ($line in $config) {
+            if ($line -match '^[ ]*PROJECT_NAME[ ]*-[ ]*(.+)$') { echo "PROJECT_NAME=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+            if ($line -match '^[ ]*BRANCH[ ]*-[ ]*(.+)$') { echo "BRANCH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+            if ($line -match '^[ ]*UIPATH_CLI_PATH[ ]*-[ ]*(.+)$') { echo "UIPATH_CLI_PATH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+            if ($line -match '^[ ]*FOLDER_ORGANIZATION_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_ORG_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+            if ($line -match '^[ ]*FOLDER_DEPLOY_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_DEPLOY_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+            if ($line -match '^[ ]*MACHINE[ ]*-[ ]*(.+)$') { echo "MACHINE=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+            if ($line -match '^[ ]*ROBOT[ ]*-[ ]*(.+)$') { echo "ROBOT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+            if ($line -match '^[ ]*TIMEOUT_SEC[ ]*-[ ]*(.+)$') { echo "TIMEOUT_SEC=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
           }
-          
+      - name: Print loaded config values
+        shell: pwsh
+        run: |
+          Get-ChildItem Env: | Where-Object { $_.Name -in @('PROJECT_NAME','BRANCH','UIPATH_CLI_PATH','FOLDER_ORG_UNIT','FOLDER_DEPLOY_UNIT','MACHINE','ROBOT','TIMEOUT_SEC') } | ForEach-Object { Write-Host "$($_.Name)=$($_.Value)" }
       - name: Build Nuget Package
         shell: powershell
-        run: ${{ github.workspace }}\scripts\UiPathPack.ps1 ${{ github.workspace }}\project.json -destination_folder ${{ github.workspace }}\package -autoVersion -uipathCliFilePath ${{ needs.config.outputs.cli_path }}
-        
+        run: ${{ github.workspace }}\scripts\UiPathPack.ps1 ${{ github.workspace }}\project.json -destination_folder ${{ github.workspace }}\package -autoVersion -uipathCliFilePath ${{ env.UIPATH_CLI_PATH }}
       - name: Upload UiPath Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -289,106 +119,58 @@ jobs:
           path: |
            package/*.*
            scripts/*.ps1
-
+                    
   run-uipath-nuget-package:
-    needs: [config]
-    if: needs.config.outputs.run == 'Yes'
-    runs-on: self-hosted
-    steps:
-      - name: Force fresh repository checkout for run
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          force: true
-          submodules: false
-          token: ${{ github.token }}
-          
-      - name: Verify run files are current
-        shell: pwsh
-        run: |
-          Write-Host "=== RUN FILES VERIFICATION ===" -ForegroundColor Yellow
-          
-          $runFiles = @("scripts/UiPathRun.ps1", "Configue-CICD.txt")
-          foreach ($file in $runFiles) {
-            $fullPath = Join-Path "${{ github.workspace }}" $file
-            if (Test-Path $fullPath) {
-              $fileInfo = Get-Item $fullPath
-              $hash = Get-FileHash $fullPath -Algorithm SHA256
-              Write-Host "✅ $file" -ForegroundColor Green
-              Write-Host "   Modified: $($fileInfo.LastWriteTime)" -ForegroundColor Cyan
-              Write-Host "   Size: $($fileInfo.Length) bytes" -ForegroundColor Cyan
-              Write-Host "   Hash: $($hash.Hash.Substring(0,16))..." -ForegroundColor Cyan
-            } else {
-              Write-Host "❌ Missing run file: $file" -ForegroundColor Red
+      needs: [config]
+      if: needs.config.outputs.run == 'Yes'
+      runs-on: self-hosted
+      steps:
+        - name: Check out repository code
+          uses: actions/checkout@v4
+        - name: Load config values from Configue-CICD.txt
+          id: load_config
+          shell: pwsh
+          run: |
+            $config = Get-Content "${{ github.workspace }}\Configue-CICD.txt"
+            foreach ($line in $config) {
+              if ($line -match '^[ ]*PROJECT_NAME[ ]*-[ ]*(.+)$') { echo "PROJECT_NAME=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*BRANCH[ ]*-[ ]*(.+)$') { echo "BRANCH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*UIPATH_CLI_PATH[ ]*-[ ]*(.+)$') { echo "UIPATH_CLI_PATH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*FOLDER_ORGANIZATION_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_ORG_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*FOLDER_DEPLOY_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_DEPLOY_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*MACHINE[ ]*-[ ]*(.+)$') { echo "MACHINE=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*ROBOT[ ]*-[ ]*(.+)$') { echo "ROBOT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+              if ($line -match '^[ ]*TIMEOUT_SEC[ ]*-[ ]*(.+)$') { echo "TIMEOUT_SEC=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
             }
-          }
-
-      - name: Run Package
-        shell: pwsh
-        run: |
-          Write-Host "=== EXECUTING UIPATH RUN SCRIPT ===" -ForegroundColor Yellow
-          Write-Host "PROJECT_NAME: ${{ needs.config.outputs.project_name }}" -ForegroundColor Cyan
-          Write-Host "CLI_PATH: ${{ needs.config.outputs.cli_path }}" -ForegroundColor Cyan
-          
-          # Validate required parameters
-          if ([string]::IsNullOrEmpty("${{ needs.config.outputs.project_name }}")) {
-            Write-Error "PROJECT_NAME is empty or not set"
-            exit 1
-          }
-          
-          if ([string]::IsNullOrEmpty("${{ needs.config.outputs.cli_path }}")) {
-            Write-Error "UIPATH_CLI_PATH is empty or not set"
-            exit 1
-          }
-          
-          # Verify script file exists
-          $scriptPath = "${{ github.workspace }}\scripts\UiPathRun.ps1"
-          if (-not (Test-Path $scriptPath)) {
-            Write-Error "UiPath Run script not found: $scriptPath"
-            exit 1
-          }
-          
-          $scriptInfo = Get-Item $scriptPath
-          Write-Host "Using script: $scriptPath (Modified: $($scriptInfo.LastWriteTime))" -ForegroundColor Cyan
-          
-          try {
-            & $scriptPath `
-              -processName "${{ needs.config.outputs.project_name }}" `
-              -uriOrch "${{ env.ORCH_URL }}" `
-              -tenantlName "${{ env.ORCH_TENANT }}" `
-              -accountForApp "${{ env.ORCH_ACC_NAME }}" `
-              -applicationId "0df2fe2f-f8df-45bd-9777-88ab4ce30689" `
-              -applicationScope "OR.Execution OR.Jobs OR.Robots" `
-              -folder_organization_unit "${{ needs.config.outputs.folder_org_unit }}" `
-              -machine "${{ needs.config.outputs.machine }}" `
-              -robots "${{ needs.config.outputs.robot }}" `
-              -uipathCliFilePath "${{ needs.config.outputs.cli_path }}" `
-              -timeout ([int]"${{ needs.config.outputs.timeout_sec }}")
-          } catch {
-            Write-Error "Failed to execute UiPath Run script: $_"
-            exit 1
-          }
+        - name: Print loaded config values
+          shell: pwsh
+          run: |
+            Get-ChildItem Env: | Where-Object { $_.Name -in @('PROJECT_NAME','BRANCH','UIPATH_CLI_PATH','FOLDER_ORG_UNIT','FOLDER_DEPLOY_UNIT','MACHINE','ROBOT','TIMEOUT_SEC') } | ForEach-Object { Write-Host "$($_.Name)=$($_.Value)" }
+        - name: run Package
+          shell: powershell
+          run: |
+            echo "PROJECT_NAME from config: ${{ env.PROJECT_NAME }}"
+            ${{ github.workspace }}\scripts\UiPathJobRun.ps1 ${{ env.PROJECT_NAME }} ${{env.ORCH_URL}} ${{env.ORCH_TENANT}} -accountForApp ${{env.ORCH_ACC_NAME}} -applicationId ${{env.ORCH_APP_ID}} -applicationSecret ${{env.ORCH_APP_SECRET}} -applicationScope "${{env.ORCH_APP_SCOPE}}" -accountName ${{env.ORCH_ACC_NAME}} -folder_organization_unit ${{ env.FOLDER_ORG_UNIT }} -machine ${{ env.MACHINE }} -robots ${{ env.ROBOT }} -uipathCliFilePath ${{ env.UIPATH_CLI_PATH }} -timeout ${{ env.TIMEOUT_SEC }}
 
   publish-uipath-nuget-package:
-     needs: [run-uipath-nuget-package, config]
-     if: needs.config.outputs.deploy == 'Yes'
-     runs-on: self-hosted
-     steps: 
-      - name: Force fresh repository checkout for deploy
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          force: true
-          submodules: false
-          token: ${{ github.token }}
-        
+    needs: [run-uipath-nuget-package, config]
+    if: needs.config.outputs.deploy == 'Yes'
+    runs-on: self-hosted
+    steps: 
       - name: Download UiPath Artifacts
         uses: actions/download-artifact@v4
         with:
           name: Artifacts
-          
+      - name: Load config values from Configue-CICD.txt
+        id: load_config
+        shell: pwsh
+        run: |
+          $config = Get-Content "${{ github.workspace }}\Configue-CICD.txt"
+          foreach ($line in $config) {
+            if ($line -match '^[ ]*UIPATH_CLI_PATH[ ]*-[ ]*(.+)$') { echo "UIPATH_CLI_PATH=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+            if ($line -match '^[ ]*FOLDER_ORGANIZATION_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_ORG_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+            if ($line -match '^[ ]*FOLDER_DEPLOY_UNIT[ ]*-[ ]*(.+)$') { echo "FOLDER_DEPLOY_UNIT=$($Matches[1].Trim())" >> $env:GITHUB_ENV }
+          }
       - name: Publish Nuget Package to DEV
         shell: powershell
-        run: ${{ github.workspace }}\scripts\UiPathDeploy.ps1 ${{ github.workspace }}\package ${{ env.ORCH_URL }} ${{ env.ORCH_TENANT }} -UserKey ${{ env.ORCH_USER_KEY }} -account_name ${{ env.ORCH_ACC_NAME }} -folder_organization_unit ${{ needs.config.outputs.folder_deploy_unit }} -uipathCliFilePath ${{ needs.config.outputs.cli_path }}
+        run: ${{ github.workspace }}\scripts\UiPathDeploy.ps1 ${{ github.workspace }}\package ${{env.ORCH_URL}} ${{env.ORCH_TENANT}} -UserKey ${{env.ORCH_USER_KEY}} -account_name ${{env.ORCH_ACC_NAME}} -folder_organization_unit ${{ env.FOLDER_DEPLOY_UNIT }} -uipathCliFilePath ${{ env.UIPATH_CLI_PATH }}
