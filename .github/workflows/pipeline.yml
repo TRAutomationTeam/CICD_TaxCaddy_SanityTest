@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'Configue-CICD.txt'
+      - 'Configure-CICD.txt'
 
 env: 
   PROJECT_FOLDER: ${{ github.action_path }}
