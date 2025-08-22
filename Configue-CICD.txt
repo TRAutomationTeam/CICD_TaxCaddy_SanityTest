@@ -1,4 +1,4 @@
-﻿PROJECT_NAME - TR_AUT_API_2nd_Submission_Performer_2023
+﻿PROJECT_NAME - TR_Aut_Workflow_Performer_DD-2024
 ENVIRONMENT - QAT
 RELEASE_NOTES - Jul8653 API_SanityTest CICD_TaxCaddy_SanityTest Fileroom_SanityTest CICD_Fileroom_SanityTest TR_OCS_2024 TR_AUT_API_1st_Submission_Dispatcher
 BRANCH - main
