@@ -1,11 +1,11 @@
-﻿PROJECT_NAME - TR_AUT_DRL_1040
+﻿PROJECT_NAME - API_SanityTest
 ENVIRONMENT - QAT
 RELEASE_NOTES - Jul8653 API_SanityTest CICD_TaxCaddy_SanityTest Fileroom_SanityTest CICD_Fileroom_SanityTest TR_OCS_2024 TR_AUT_API_1st_Submission_Dispatcher
 BRANCH - main
 UIPATH_CLI_PATH - C:\uipathcli\23.10.8753.32995\tools\uipcli.exe
 FOLDER_ORGANIZATION_UNIT - Automation
 FOLDER_DEPLOY_UNIT - Unattended
-MACHINE - e2-dev-upth01
+MACHINE - e2-dev-upth02
 ROBOT - minal
 TIMEOUT_SEC - 15000
 BUILD - false
